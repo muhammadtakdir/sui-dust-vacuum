@@ -1,8 +1,8 @@
 "use client";
 
 import { motion } from "framer-motion";
-import Image from "next/image";
 import { Check, AlertCircle } from "lucide-react";
+import { useState } from "react";
 import { TokenBalance } from "@/types";
 import { formatBalance, formatUSD, cn } from "@/lib/utils";
 import { SUI_TYPE } from "@/lib/constants";
@@ -15,9 +15,21 @@ interface TokenCardProps {
   compact?: boolean;
 }
 
+// Generate a consistent color based on symbol
+function getSymbolColor(symbol: string): string {
+  const colors = [
+    "bg-blue-500", "bg-purple-500", "bg-pink-500", "bg-red-500",
+    "bg-orange-500", "bg-amber-500", "bg-yellow-500", "bg-lime-500",
+    "bg-green-500", "bg-emerald-500", "bg-teal-500", "bg-cyan-500",
+  ];
+  const hash = symbol.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+}
+
 export function TokenCard({ token, onSelect, isSelectable = true, index, compact = false }: TokenCardProps) {
   const isSui = token.coinType === SUI_TYPE;
   const canSelect = isSelectable && !isSui;
+  const [imageError, setImageError] = useState(false);
 
   return (
     <motion.div
@@ -82,25 +94,23 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
       <div className={cn("flex items-center gap-3", compact ? "mt-4" : "mt-6")}>
         {/* Token logo */}
         <div className={cn(
-          "relative rounded-full overflow-hidden bg-sui-darker flex items-center justify-center",
-          compact ? "w-10 h-10" : "w-12 h-12"
+          "relative rounded-full overflow-hidden flex items-center justify-center",
+          compact ? "w-10 h-10" : "w-12 h-12",
+          (!token.logo || imageError) && getSymbolColor(token.symbol)
         )}>
-          {token.logo ? (
-            <Image
+          {token.logo && !imageError ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
               src={token.logo}
               alt={token.symbol}
               width={compact ? 40 : 48}
               height={compact ? 40 : 48}
-              className="object-cover"
-              onError={(e) => {
-                // Fallback to symbol
-                const target = e.target as HTMLImageElement;
-                target.style.display = 'none';
-              }}
+              className="object-cover w-full h-full"
+              onError={() => setImageError(true)}
             />
           ) : (
-            <span className={cn("font-bold text-sui-muted", compact ? "text-sm" : "text-lg")}>
-              {token.symbol.slice(0, 2)}
+            <span className={cn("font-bold text-white", compact ? "text-sm" : "text-lg")}>
+              {token.symbol.slice(0, 2).toUpperCase()}
             </span>
           )}
         </div>
