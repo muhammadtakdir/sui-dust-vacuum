@@ -242,6 +242,30 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
     );
   }, []);
 
+  // Update the action for a token (swap, burn, or donate)
+  const updateTokenAction = useCallback((coinType: string, action: 'swap' | 'burn' | 'donate') => {
+    setBalances((prev) =>
+      prev.map((token) =>
+        token.coinType === coinType
+          ? { ...token, action }
+          : token
+      )
+    );
+  }, []);
+
+  // Update hasRoute status for tokens based on route check results
+  const updateTokenRoutes = useCallback((routeResults: Array<{ coinType: string; hasRoute: boolean }>) => {
+    setBalances((prev) =>
+      prev.map((token) => {
+        const routeCheck = routeResults.find(r => r.coinType === token.coinType);
+        if (routeCheck) {
+          return { ...token, hasRoute: routeCheck.hasRoute };
+        }
+        return token;
+      })
+    );
+  }, []);
+
   const selectedTokens = balances.filter((t) => t.selected);
   const dustTokens = balances.filter((t) => t.isDust);
   const totalDustValue = dustTokens.reduce((acc, t) => acc + t.valueUSD, 0);
@@ -255,6 +279,8 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
     toggleSelection,
     selectAllDust,
     deselectAll,
+    updateTokenAction,
+    updateTokenRoutes,
     selectedTokens,
     dustTokens,
     totalDustValue,

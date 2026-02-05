@@ -8,3 +8,4 @@ export { DepositPanel } from "./DepositPanel";
 export { RewardsPanel } from "./RewardsPanel";
 export { AdminPanel } from "./AdminPanel";
 export { GovernancePanel } from "./GovernancePanel";
+export { BurnConfirmDialog } from "./BurnConfirmDialog";

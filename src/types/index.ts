@@ -11,6 +11,8 @@ export interface TokenBalance {
   isDust: boolean;
   selected: boolean;
   verified?: boolean; // Token verified by Cetus (shows blue checkmark)
+  hasRoute?: boolean; // Whether this token has a swap route on Cetus
+  action?: 'swap' | 'burn' | 'donate'; // What to do with this token
 }
 
 export interface SwapRoute {
@@ -34,6 +36,8 @@ export interface VacuumResult {
   success: boolean;
   txDigest?: string;
   tokensSwapped: number;
+  tokensBurned?: number;
+  tokensDonated?: number;
   totalSuiReceived: string;
   totalValueUSD: number;
   error?: string;

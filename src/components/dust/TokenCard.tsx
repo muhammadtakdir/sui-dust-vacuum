@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Check, AlertCircle, BadgeCheck } from "lucide-react";
+import { Check, AlertCircle, BadgeCheck, Flame, Gift, AlertTriangle } from "lucide-react";
 import { useState } from "react";
 import { TokenBalance } from "@/types";
 import { formatBalance, formatUSD, cn } from "@/lib/utils";
@@ -13,6 +13,8 @@ interface TokenCardProps {
   isSelectable?: boolean;
   index: number;
   compact?: boolean;
+  showActionBadge?: boolean; // Show burn/donate badge for no-route tokens
+  onActionChange?: (action: 'swap' | 'burn' | 'donate') => void;
 }
 
 // Generate a consistent color based on symbol
@@ -26,10 +28,11 @@ function getSymbolColor(symbol: string): string {
   return colors[hash % colors.length];
 }
 
-export function TokenCard({ token, onSelect, isSelectable = true, index, compact = false }: TokenCardProps) {
+export function TokenCard({ token, onSelect, isSelectable = true, index, compact = false, showActionBadge = false, onActionChange }: TokenCardProps) {
   const isSui = token.coinType === SUI_TYPE;
   const canSelect = isSelectable && !isSui;
   const [imageError, setImageError] = useState(false);
+  const hasNoRoute = token.hasRoute === false;
 
   return (
     <motion.div
@@ -66,7 +69,7 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
       )}
 
       {/* Dust badge */}
-      {token.isDust && (
+      {token.isDust && !hasNoRoute && (
         <motion.div
           className="absolute top-3 left-3 px-2 py-0.5 bg-sui-warning/20 border border-sui-warning/30 rounded-full flex items-center gap-1"
           initial={{ scale: 0 }}
@@ -75,6 +78,19 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
         >
           <AlertCircle className="w-3 h-3 text-sui-warning" />
           <span className="text-xs text-sui-warning font-medium">Dust</span>
+        </motion.div>
+      )}
+
+      {/* No Route badge - token without liquidity */}
+      {hasNoRoute && token.selected && (
+        <motion.div
+          className="absolute top-3 left-3 px-2 py-0.5 bg-red-500/20 border border-red-500/30 rounded-full flex items-center gap-1"
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ delay: 0.2 }}
+        >
+          <AlertTriangle className="w-3 h-3 text-red-400" />
+          <span className="text-xs text-red-400 font-medium">No LP</span>
         </motion.div>
       )}
 
@@ -161,10 +177,65 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
         </div>
       )}
 
+      {/* Action buttons for no-route tokens */}
+      {hasNoRoute && token.selected && showActionBadge && (
+        <div className="mt-3 pt-3 border-t border-sui-border">
+          <p className="text-xs text-red-400 mb-2">No liquidity - Choose action:</p>
+          <div className="flex gap-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onActionChange?.('burn');
+              }}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                token.action === 'burn'
+                  ? "bg-red-500/20 text-red-400 border border-red-500/50"
+                  : "bg-sui-darker text-sui-muted hover:bg-sui-border hover:text-white"
+              )}
+            >
+              <Flame className="w-3.5 h-3.5" />
+              Burn
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onActionChange?.('donate');
+              }}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                token.action === 'donate'
+                  ? "bg-purple-500/20 text-purple-400 border border-purple-500/50"
+                  : "bg-sui-darker text-sui-muted hover:bg-sui-border hover:text-white"
+              )}
+            >
+              <Gift className="w-3.5 h-3.5" />
+              Donate
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Animated vacuum effect when selected */}
-      {token.selected && (
+      {token.selected && !hasNoRoute && (
         <motion.div
           className="absolute inset-0 border-2 border-sui-blue rounded-xl"
+          initial={{ opacity: 0 }}
+          animate={{
+            opacity: [0.3, 0.6, 0.3],
+          }}
+          transition={{
+            duration: 2,
+            repeat: Infinity,
+            ease: "easeInOut",
+          }}
+        />
+      )}
+
+      {/* Different border effect for no-route tokens */}
+      {token.selected && hasNoRoute && (
+        <motion.div
+          className="absolute inset-0 border-2 border-red-500/50 rounded-xl"
           initial={{ opacity: 0 }}
           animate={{
             opacity: [0.3, 0.6, 0.3],

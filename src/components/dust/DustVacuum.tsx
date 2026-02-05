@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useCurrentAccount, ConnectButton } from "@mysten/dapp-kit";
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import {
   Wind,
   RefreshCw,
@@ -14,16 +14,20 @@ import {
   AlertCircle,
   XCircle,
   Info,
+  Flame,
+  Gift,
 } from "lucide-react";
 import { useTokenBalances, useDustVacuum } from "@/hooks";
 import { TokenCard, TokenCardSkeleton } from "./TokenCard";
 import { VacuumButton } from "./VacuumButton";
 import { PoolModeSelector, ModeTooltip, VacuumMode } from "./PoolModeSelector";
 import { DustDAOPool } from "./DustDAOPool";
+import { BurnConfirmDialog } from "./BurnConfirmDialog";
 import { SuccessAnimation } from "@/components/effects/SuccessAnimation";
 import { VacuumEffect } from "@/components/effects/VacuumEffect";
 import { formatUSD, cn } from "@/lib/utils";
 import { DEFAULT_DUST_THRESHOLD_USD } from "@/lib/constants";
+import { TokenBalance } from "@/types";
 
 export function DustVacuum() {
   const account = useCurrentAccount();
@@ -35,6 +39,8 @@ export function DustVacuum() {
     dust: true,
     other: false,
   });
+  const [showBurnConfirm, setShowBurnConfirm] = useState(false);
+  const [tokenActions, setTokenActions] = useState<Record<string, 'swap' | 'burn' | 'donate'>>({});
 
   const {
     balances,
@@ -47,9 +53,10 @@ export function DustVacuum() {
     dustTokens,
     totalDustValue,
     selectedValue,
+    updateTokenAction,
   } = useTokenBalances(dustThreshold);
 
-  const { state, progress, currentStep, result, routeResults, vacuum, reset } = useDustVacuum();
+  const { state, progress, currentStep, result, routeResults, vacuum, burnTokens, donateTokens, reset } = useDustVacuum();
 
   const nonDustTokens = balances.filter((t) => !t.isDust && t.coinType !== "0x2::sui::SUI");
   const suiToken = balances.find((t) => t.coinType === "0x2::sui::SUI");
@@ -58,9 +65,60 @@ export function DustVacuum() {
   const tokensWithoutRoutes = routeResults.filter(r => !r.hasRoute);
   const tokensWithRoutes = routeResults.filter(r => r.hasRoute);
 
+  // Get tokens to burn (selected tokens that have no route and action is 'burn')
+  const tokensToBurn = selectedTokens.filter(t => {
+    const routeCheck = routeResults.find(r => r.coinType === t.coinType);
+    return routeCheck && !routeCheck.hasRoute && (tokenActions[t.coinType] === 'burn' || t.action === 'burn');
+  });
+
+  // Get tokens to donate (selected tokens that have no route and action is 'donate')  
+  const tokensToDonate = selectedTokens.filter(t => {
+    const routeCheck = routeResults.find(r => r.coinType === t.coinType);
+    return routeCheck && !routeCheck.hasRoute && (tokenActions[t.coinType] === 'donate' || t.action === 'donate');
+  });
+
+  // Handle action change for a token
+  const handleActionChange = useCallback((coinType: string, action: 'swap' | 'burn' | 'donate') => {
+    setTokenActions(prev => ({ ...prev, [coinType]: action }));
+    updateTokenAction?.(coinType, action);
+  }, [updateTokenAction]);
+
   const handleVacuum = async () => {
     if (selectedTokens.length === 0) return;
+    
+    // If there are tokens to burn, show confirmation dialog first
+    if (tokensToBurn.length > 0) {
+      setShowBurnConfirm(true);
+      return;
+    }
+    
+    // Otherwise proceed with normal vacuum
     await vacuum(selectedTokens);
+  };
+
+  const handleBurnConfirm = async () => {
+    setShowBurnConfirm(false);
+    
+    // First burn the tokens without routes
+    if (tokensToBurn.length > 0) {
+      await burnTokens(tokensToBurn);
+    }
+    
+    // Then swap the tokens with routes
+    const tokensToSwap = selectedTokens.filter(t => {
+      const routeCheck = routeResults.find(r => r.coinType === t.coinType);
+      return !routeCheck || routeCheck.hasRoute;
+    });
+    
+    if (tokensToSwap.length > 0) {
+      await vacuum(tokensToSwap);
+    }
+  };
+
+  const handleDonate = async () => {
+    if (tokensToDonate.length > 0) {
+      await donateTokens(tokensToDonate);
+    }
   };
 
   const handleClose = () => {
@@ -284,14 +342,27 @@ export function DustVacuum() {
                           </button>
                         </div>
                         <div className="grid sm:grid-cols-2 gap-4">
-                          {dustTokens.map((token, index) => (
-                            <TokenCard
-                              key={token.coinType}
-                              token={token}
-                              onSelect={() => toggleSelection(token.coinType)}
-                              index={index}
-                            />
-                          ))}
+                          {dustTokens.map((token, index) => {
+                            // Check if this token has a route
+                            const routeCheck = routeResults.find(r => r.coinType === token.coinType);
+                            const hasNoRoute = routeCheck && !routeCheck.hasRoute;
+                            const tokenWithRoute = {
+                              ...token,
+                              hasRoute: !hasNoRoute,
+                              action: tokenActions[token.coinType] || token.action,
+                            };
+                            
+                            return (
+                              <TokenCard
+                                key={token.coinType}
+                                token={tokenWithRoute}
+                                onSelect={() => toggleSelection(token.coinType)}
+                                index={index}
+                                showActionBadge={hasNoRoute && token.selected}
+                                onActionChange={(action) => handleActionChange(token.coinType, action)}
+                              />
+                            );
+                          })}
                         </div>
                       </>
                     ) : (
@@ -337,14 +408,26 @@ export function DustVacuum() {
                       exit={{ opacity: 0, height: 0 }}
                     >
                       <div className="grid sm:grid-cols-2 gap-4">
-                        {nonDustTokens.map((token, index) => (
-                          <TokenCard
-                            key={token.coinType}
-                            token={token}
-                            onSelect={() => toggleSelection(token.coinType)}
-                            index={index}
-                          />
-                        ))}
+                        {nonDustTokens.map((token, index) => {
+                          const routeCheck = routeResults.find(r => r.coinType === token.coinType);
+                          const hasNoRoute = routeCheck && !routeCheck.hasRoute;
+                          const tokenWithRoute = {
+                            ...token,
+                            hasRoute: !hasNoRoute,
+                            action: tokenActions[token.coinType] || token.action,
+                          };
+                          
+                          return (
+                            <TokenCard
+                              key={token.coinType}
+                              token={tokenWithRoute}
+                              onSelect={() => toggleSelection(token.coinType)}
+                              index={index}
+                              showActionBadge={hasNoRoute && token.selected}
+                              onActionChange={(action) => handleActionChange(token.coinType, action)}
+                            />
+                          );
+                        })}
                       </div>
                     </motion.div>
                   )}
@@ -460,6 +543,47 @@ export function DustVacuum() {
                 </motion.div>
               )}
 
+              {/* Show warning if some tokens have no routes */}
+              {tokensToBurn.length > 0 && (
+                <motion.div
+                  className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-4"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                >
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm text-red-400 font-medium mb-1">
+                        {tokensToBurn.length} token{tokensToBurn.length > 1 ? 's' : ''} will be burned
+                      </p>
+                      <p className="text-xs text-red-400/70">
+                        These tokens have no liquidity pool and cannot be swapped. They will be permanently destroyed.
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {tokensToDonate.length > 0 && (
+                <motion.div
+                  className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-4 mb-4"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                >
+                  <div className="flex items-start gap-3">
+                    <Gift className="w-5 h-5 text-purple-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm text-purple-400 font-medium mb-1">
+                        {tokensToDonate.length} token{tokensToDonate.length > 1 ? 's' : ''} will be donated
+                      </p>
+                      <p className="text-xs text-purple-400/70">
+                        These tokens will be sent to the DustDAO community pool.
+                      </p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
               <VacuumButton
                 onClick={handleVacuum}
                 isLoading={state === "preparing" || state === "swapping" || state === "loading"}
@@ -476,6 +600,15 @@ export function DustVacuum() {
 
         {/* Vacuum visual effect */}
         <VacuumEffect isActive={state === "swapping"} />
+
+        {/* Burn confirmation dialog */}
+        <BurnConfirmDialog
+          isOpen={showBurnConfirm}
+          onClose={() => setShowBurnConfirm(false)}
+          onConfirm={handleBurnConfirm}
+          tokens={tokensToBurn}
+          isLoading={state === "preparing" || state === "swapping"}
+        />
 
         {/* Success/Error modal */}
         {(state === "success" || state === "error") && (

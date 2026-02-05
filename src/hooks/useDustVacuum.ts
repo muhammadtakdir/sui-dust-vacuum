@@ -32,7 +32,10 @@ export interface RouteCheckResult {
   route: AggregatorRoute | null;
   estimatedSuiOut: string;
   error?: string;
+  suggestedAction?: 'swap' | 'burn' | 'donate'; // Suggested action based on route availability
 }
+
+export type TokenAction = 'swap' | 'burn' | 'donate';
 
 /**
  * Sui Dust Vacuum Hook
@@ -43,6 +46,11 @@ export interface RouteCheckResult {
  * - Users have many small "dust" balances ($0.03, $0.10, etc.)
  * - Manual swapping is impossible because gas > dust value
  * - This hook batches ALL into one PTB transaction
+ * 
+ * Actions:
+ * - swap: Swap to SUI via Cetus (default for tokens with liquidity)
+ * - burn: Burn tokens with 0 value (tokens without liquidity)
+ * - donate: Send to DustDAO pool for community use
  * 
  * Goal: Token balance becomes EXACTLY 0 after vacuum
  */
@@ -138,6 +146,7 @@ export function useDustVacuum() {
 
   /**
    * Pre-check routes for UI feedback
+   * Returns suggested actions: swap, burn, or donate
    */
   const checkRoutes = useCallback(
     async (selectedTokens: TokenBalance[]): Promise<RouteCheckResult[]> => {
@@ -155,6 +164,13 @@ export function useDustVacuum() {
         if (token.coinType === SUI_TYPE) continue;
 
         const route = await getSwapRoute(token.coinType, SUI_TYPE, token.balance.toString());
+        
+        // Suggest action based on route availability
+        let suggestedAction: 'swap' | 'burn' | 'donate' = 'swap';
+        if (!route) {
+          // No liquidity - suggest burn (with warning) or donate to DustDAO
+          suggestedAction = 'burn';
+        }
 
         results.push({
           coinType: token.coinType,
@@ -162,7 +178,8 @@ export function useDustVacuum() {
           hasRoute: route !== null,
           route,
           estimatedSuiOut: route?.amountOut || "0",
-          error: route ? undefined : `No liquidity for ${token.symbol} → SUI`,
+          error: route ? undefined : `No liquidity pool for ${token.symbol}. You can burn it or donate to DustDAO.`,
+          suggestedAction,
         });
       }
 
@@ -174,6 +191,298 @@ export function useDustVacuum() {
       return results;
     },
     []
+  );
+
+  /**
+   * BURN TOKENS
+   * 
+   * Burns tokens that have no liquidity/swap route.
+   * This permanently destroys the tokens - use with caution!
+   * 
+   * Note: On Sui, burning means sending to address 0x0 (the zero address)
+   * or using a burn function if the token has one.
+   */
+  const burnTokens = useCallback(
+    async (tokens: TokenBalance[]): Promise<VacuumResult> => {
+      if (!account?.address) {
+        return {
+          success: false,
+          tokensSwapped: 0,
+          tokensBurned: 0,
+          totalSuiReceived: "0",
+          totalValueUSD: 0,
+          error: "Wallet not connected",
+        };
+      }
+
+      if (tokens.length === 0) {
+        return {
+          success: false,
+          tokensSwapped: 0,
+          tokensBurned: 0,
+          totalSuiReceived: "0",
+          totalValueUSD: 0,
+          error: "No tokens to burn",
+        };
+      }
+
+      setState("preparing");
+      setProgress(10);
+      setCurrentStep("Preparing to burn tokens...");
+
+      try {
+        const tx = new Transaction();
+        tx.setGasBudget(DEFAULT_GAS_BUDGET);
+
+        let totalBurned = 0;
+        let totalValueUSD = 0;
+
+        for (const token of tokens) {
+          if (token.coinType === SUI_TYPE) continue;
+
+          // Get ALL coins of this type
+          const coins = await getAllCoinObjects(token.coinType, account.address);
+          if (coins.length === 0) continue;
+
+          const coinIds = coins.map(c => c.coinObjectId);
+          
+          // Merge all coins if more than one
+          let coinToBurn;
+          if (coinIds.length === 1) {
+            coinToBurn = tx.object(coinIds[0]);
+          } else {
+            const [primary, ...rest] = coinIds;
+            coinToBurn = tx.object(primary);
+            tx.mergeCoins(coinToBurn, rest.map(id => tx.object(id)));
+          }
+
+          // Transfer to zero address (0x0) to effectively "burn"
+          // This is the standard way to burn tokens on Sui
+          tx.transferObjects(
+            [coinToBurn],
+            tx.pure.address("0x0000000000000000000000000000000000000000000000000000000000000000")
+          );
+
+          totalBurned++;
+          totalValueUSD += token.valueUSD;
+
+          console.log(`[Burn] Added ${token.symbol} to burn transaction`);
+        }
+
+        if (totalBurned === 0) {
+          setState("error");
+          return {
+            success: false,
+            tokensSwapped: 0,
+            tokensBurned: 0,
+            totalSuiReceived: "0",
+            totalValueUSD: 0,
+            error: "No tokens were eligible for burning",
+          };
+        }
+
+        setState("swapping");
+        setProgress(50);
+        setCurrentStep(`Burning ${totalBurned} token${totalBurned > 1 ? 's' : ''}...`);
+
+        const txResult = await signAndExecute({
+          transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
+        });
+
+        setProgress(85);
+        setCurrentStep("Confirming burn on chain...");
+
+        await client.waitForTransaction({
+          digest: txResult.digest,
+          options: { showEffects: true },
+        });
+
+        setState("success");
+        setProgress(100);
+        setCurrentStep("🔥 Tokens burned successfully!");
+
+        const result: VacuumResult = {
+          success: true,
+          txDigest: txResult.digest,
+          tokensSwapped: 0,
+          tokensBurned: totalBurned,
+          totalSuiReceived: "0",
+          totalValueUSD,
+        };
+
+        setResult(result);
+        return result;
+
+      } catch (error) {
+        console.error("[Burn] Error:", error);
+        setState("error");
+
+        const errorMsg = error instanceof Error ? error.message : "Unknown error";
+        return {
+          success: false,
+          tokensSwapped: 0,
+          tokensBurned: 0,
+          totalSuiReceived: "0",
+          totalValueUSD: 0,
+          error: errorMsg,
+        };
+      }
+    },
+    [account?.address, client, signAndExecute, getAllCoinObjects]
+  );
+
+  /**
+   * DONATE TO DUSTDAO POOL
+   * 
+   * Sends tokens to the DustDAO vault for community use.
+   * These tokens can potentially be used for airdrops, liquidity, etc.
+   */
+  const donateTokens = useCallback(
+    async (tokens: TokenBalance[]): Promise<VacuumResult> => {
+      if (!account?.address) {
+        return {
+          success: false,
+          tokensSwapped: 0,
+          tokensDonated: 0,
+          totalSuiReceived: "0",
+          totalValueUSD: 0,
+          error: "Wallet not connected",
+        };
+      }
+
+      if (tokens.length === 0) {
+        return {
+          success: false,
+          tokensSwapped: 0,
+          tokensDonated: 0,
+          totalSuiReceived: "0",
+          totalValueUSD: 0,
+          error: "No tokens to donate",
+        };
+      }
+
+      const vaultId = DUST_VACUUM_CONTRACT.mainnet.DUST_VAULT_ID;
+      if (!vaultId) {
+        return {
+          success: false,
+          tokensSwapped: 0,
+          tokensDonated: 0,
+          totalSuiReceived: "0",
+          totalValueUSD: 0,
+          error: "DustDAO vault not configured",
+        };
+      }
+
+      setState("preparing");
+      setProgress(10);
+      setCurrentStep("Preparing donation to DustDAO...");
+
+      try {
+        const tx = new Transaction();
+        tx.setGasBudget(DEFAULT_GAS_BUDGET);
+
+        let totalDonated = 0;
+        let totalValueUSD = 0;
+
+        for (const token of tokens) {
+          if (token.coinType === SUI_TYPE) continue;
+
+          // Get ALL coins of this type
+          const coins = await getAllCoinObjects(token.coinType, account.address);
+          if (coins.length === 0) continue;
+
+          const coinIds = coins.map(c => c.coinObjectId);
+          const totalBalance = coins.reduce((sum, c) => sum + BigInt(c.balance), BigInt(0));
+          
+          // Merge all coins if more than one
+          let coinToDonate;
+          if (coinIds.length === 1) {
+            coinToDonate = tx.object(coinIds[0]);
+          } else {
+            const [primary, ...rest] = coinIds;
+            coinToDonate = tx.object(primary);
+            tx.mergeCoins(coinToDonate, rest.map(id => tx.object(id)));
+          }
+
+          // Call donate_dust function on DustVault
+          const packageId = DUST_VACUUM_CONTRACT.mainnet.PACKAGE_ID;
+          tx.moveCall({
+            target: `${packageId}::vacuum::donate_dust`,
+            typeArguments: [token.coinType],
+            arguments: [
+              tx.object(vaultId),
+              coinToDonate,
+              tx.pure.u64(totalBalance.toString()),
+              tx.object(CLOCK_OBJECT_ID),
+            ],
+          });
+
+          totalDonated++;
+          totalValueUSD += token.valueUSD;
+
+          console.log(`[Donate] Added ${token.symbol} to donation transaction`);
+        }
+
+        if (totalDonated === 0) {
+          setState("error");
+          return {
+            success: false,
+            tokensSwapped: 0,
+            tokensDonated: 0,
+            totalSuiReceived: "0",
+            totalValueUSD: 0,
+            error: "No tokens were eligible for donation",
+          };
+        }
+
+        setState("swapping");
+        setProgress(50);
+        setCurrentStep(`Donating ${totalDonated} token${totalDonated > 1 ? 's' : ''} to DustDAO...`);
+
+        const txResult = await signAndExecute({
+          transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
+        });
+
+        setProgress(85);
+        setCurrentStep("Confirming donation on chain...");
+
+        await client.waitForTransaction({
+          digest: txResult.digest,
+          options: { showEffects: true },
+        });
+
+        setState("success");
+        setProgress(100);
+        setCurrentStep("💝 Donated to DustDAO successfully!");
+
+        const result: VacuumResult = {
+          success: true,
+          txDigest: txResult.digest,
+          tokensSwapped: 0,
+          tokensDonated: totalDonated,
+          totalSuiReceived: "0",
+          totalValueUSD,
+        };
+
+        setResult(result);
+        return result;
+
+      } catch (error) {
+        console.error("[Donate] Error:", error);
+        setState("error");
+
+        const errorMsg = error instanceof Error ? error.message : "Unknown error";
+        return {
+          success: false,
+          tokensSwapped: 0,
+          tokensDonated: 0,
+          totalSuiReceived: "0",
+          totalValueUSD: 0,
+          error: errorMsg,
+        };
+      }
+    },
+    [account?.address, client, signAndExecute, getAllCoinObjects]
   );
 
   /**
@@ -348,8 +657,9 @@ export function useDustVacuum() {
           );
 
           // Build swap call(s) based on route
-          // Use Cetus INTEGRATE_PACKAGE for swap operations (pool_script module)
-          const integratePackage = CETUS_CONFIG.mainnet.INTEGRATE_PACKAGE;
+          // Use Cetus INTEGRATE_PUBLISHED_AT for swap operations (pool_script module)
+          // The published_at address is the actual deployed version to use
+          const integratePackage = CETUS_CONFIG.mainnet.INTEGRATE_PUBLISHED_AT;
           
           if (route.routes.length === 1) {
             // Single-hop swap
@@ -521,6 +831,8 @@ export function useDustVacuum() {
     result,
     routeResults,
     vacuum,
+    burnTokens,
+    donateTokens,
     checkRoutes,
     reset,
   };

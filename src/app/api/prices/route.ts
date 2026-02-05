@@ -62,20 +62,30 @@ export async function POST(request: Request) {
         "https://api-sui.cetus.zone/v2/sui/default_token_list",
         {
           headers: { "Accept": "application/json" },
+          next: { revalidate: 3600 }, // Cache for 1 hour
         }
       );
 
       if (cetusResponse.ok) {
         const data = await cetusResponse.json();
-        const tokens = data.data?.lp_list || data.lp_list || data.data || [];
+        console.log("[API] Cetus token list response structure:", Object.keys(data));
         
-        if (Array.isArray(tokens)) {
-          tokens.forEach((token: Record<string, unknown>) => {
-            const coinType = (token.address || token.coin_type) as string;
+        // The API returns { code, msg, data: { lp_list: [...] } }
+        const tokenList = data?.data?.lp_list || data?.lp_list || [];
+        console.log("[API] Cetus verified tokens count:", tokenList.length);
+        
+        if (Array.isArray(tokenList)) {
+          tokenList.forEach((token: Record<string, unknown>) => {
+            // Cetus API uses 'address' field for coin type
+            const coinType = (token.address || token.coin_type || token.type) as string;
             if (coinType) {
               // Mark as verified if it's in Cetus default list
               if (prices[coinType]) {
                 prices[coinType].verified = true;
+                // Also update logo if available from Cetus
+                if (token.icon || token.logo_url || token.logoURI) {
+                  prices[coinType].logo = (token.icon || token.logo_url || token.logoURI) as string;
+                }
               } else {
                 prices[coinType] = {
                   coinType,
