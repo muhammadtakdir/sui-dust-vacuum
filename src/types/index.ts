@@ -10,6 +10,7 @@ export interface TokenBalance {
   objectIds: string[];
   isDust: boolean;
   selected: boolean;
+  verified?: boolean; // Token verified by Cetus (shows blue checkmark)
 }
 
 export interface SwapRoute {

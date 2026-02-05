@@ -7,6 +7,7 @@ interface TokenPrice {
   decimals?: number;
   logo?: string;
   usdValue?: number;
+  verified?: boolean;
 }
 
 // Fetch prices from multiple sources
@@ -44,6 +45,7 @@ export async function POST(request: Request) {
                   decimals: token.decimals as number,
                   logo: token.iconUrl as string,
                   usdValue: token.usdValue as number,
+                  verified: Boolean(token.verified),
                 };
               }
             });
@@ -52,6 +54,44 @@ export async function POST(request: Request) {
       } catch (err) {
         console.error("[API] Blockberry error:", err);
       }
+    }
+
+    // Try Cetus default token list for verified tokens
+    try {
+      const cetusResponse = await fetch(
+        "https://api-sui.cetus.zone/v2/sui/default_token_list",
+        {
+          headers: { "Accept": "application/json" },
+        }
+      );
+
+      if (cetusResponse.ok) {
+        const data = await cetusResponse.json();
+        const tokens = data.data?.lp_list || data.lp_list || data.data || [];
+        
+        if (Array.isArray(tokens)) {
+          tokens.forEach((token: Record<string, unknown>) => {
+            const coinType = (token.address || token.coin_type) as string;
+            if (coinType) {
+              // Mark as verified if it's in Cetus default list
+              if (prices[coinType]) {
+                prices[coinType].verified = true;
+              } else {
+                prices[coinType] = {
+                  coinType,
+                  price: (token.price as number) || 0,
+                  symbol: token.symbol as string,
+                  decimals: token.decimals as number,
+                  logo: (token.icon || token.logo_url || token.logoURI) as string,
+                  verified: true,
+                };
+              }
+            }
+          });
+        }
+      }
+    } catch (err) {
+      console.error("[API] Cetus token list error:", err);
     }
 
     // Fetch individual prices from DexScreener for missing tokens

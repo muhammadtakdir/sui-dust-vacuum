@@ -21,6 +21,7 @@ interface TokenPriceData {
   decimals?: number;
   logo?: string;
   usdValue?: number;
+  verified?: boolean;
 }
 
 interface PriceApiResponse {
@@ -183,6 +184,7 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
             objectIds,
             isDust,
             selected: false,
+            verified: apiTokenData?.verified || false,
           };
         })
       );

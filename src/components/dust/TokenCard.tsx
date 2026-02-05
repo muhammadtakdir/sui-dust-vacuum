@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Check, AlertCircle } from "lucide-react";
+import { Check, AlertCircle, BadgeCheck } from "lucide-react";
 import { useState } from "react";
 import { TokenBalance } from "@/types";
 import { formatBalance, formatUSD, cn } from "@/lib/utils";
@@ -116,7 +116,12 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
         </div>
 
         <div className="flex-1 min-w-0">
-          <h3 className={cn("font-semibold truncate", compact && "text-sm")}>{token.symbol}</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 className={cn("font-semibold truncate", compact && "text-sm")}>{token.symbol}</h3>
+            {token.verified && (
+              <BadgeCheck className="w-4 h-4 text-blue-400 flex-shrink-0" />
+            )}
+          </div>
           {!compact && <p className="text-sm text-sui-muted truncate">{token.name}</p>}
         </div>
 
