@@ -267,7 +267,12 @@ export function DustVacuum() {
 
         {/* Conditional Content based on Mode */}
         {vacuumMode === "pool" ? (
-          <DustDAOPool dustThreshold={dustThreshold} />
+          <DustDAOPool 
+            dustThreshold={dustThreshold} 
+            sharedDustTokens={dustTokens}
+            sharedBalances={balances}
+            onRefresh={fetchBalances}
+          />
         ) : (
           <>
             {/* Individual Mode Header */}

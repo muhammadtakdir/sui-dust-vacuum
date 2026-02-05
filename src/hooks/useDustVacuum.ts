@@ -669,48 +669,36 @@ export function useDustVacuum() {
               ? "79226673515401279992447579055" 
               : "4295048016";
 
+            // Create zero coin for the output side
+            // For a2b: we provide coinA (input), need empty coinB (output)
+            // For b2a: we provide coinB (input), need empty coinA (output)
+            const zeroCoin = tx.moveCall({
+              target: "0x2::coin::zero",
+              typeArguments: [step.a2b ? step.coinTypeB : step.coinTypeA],
+            });
+
+            // Arguments for pool_script_v2::swap_a2b/swap_b2a:
+            // [global_config, pool, coin_a, coin_b, by_amount_in, amount, amount_limit, sqrt_price_limit, clock]
             tx.moveCall({
               target: `${integratePackage}::${swapModule}::${swapFn}`,
               typeArguments: [step.coinTypeA, step.coinTypeB],
               arguments: [
                 tx.object(CETUS_CONFIG.mainnet.GLOBAL_CONFIG_ID),
                 tx.object(step.poolAddress),
-                coinToSwap,
-                tx.pure.bool(true), // by_amount_in = TRUE (use FULL input amount)
-                tx.pure.u64(totalBalance.toString()), // ENTIRE balance
-                tx.pure.u64(minAmountOut.toString()),
+                step.a2b ? coinToSwap : zeroCoin,    // coin_a
+                step.a2b ? zeroCoin : coinToSwap,    // coin_b
+                tx.pure.bool(true),                  // by_amount_in
+                tx.pure.u64(totalBalance.toString()), // amount
+                tx.pure.u64(minAmountOut.toString()), // amount_limit
                 tx.pure.u128(sqrtPriceLimit),
-                tx.object("0x6"), // Clock object
+                tx.object("0x6"),                    // Clock
               ],
             });
           } else {
-            // Multi-hop: Execute each step
-            // Note: For multi-hop, we need to handle intermediate coins
-            // This is a simplified version - in production, use Cetus Router
-            for (let i = 0; i < route.routes.length; i++) {
-              const step = route.routes[i];
-              const swapFn = step.a2b ? "swap_a2b" : "swap_b2a";
-              const sqrtPriceLimit = step.a2b 
-                ? "79226673515401279992447579055" 
-                : "4295048016";
-              const isFirst = i === 0;
-              const isLast = i === route.routes.length - 1;
-
-              tx.moveCall({
-                target: `${integratePackage}::${swapModule}::${swapFn}`,
-                typeArguments: [step.coinTypeA, step.coinTypeB],
-                arguments: [
-                  tx.object(CETUS_CONFIG.mainnet.GLOBAL_CONFIG_ID),
-                  tx.object(step.poolAddress),
-                  isFirst ? coinToSwap : tx.gas, // Output from previous swap
-                  tx.pure.bool(true),
-                  tx.pure.u64(isFirst ? totalBalance.toString() : "0"),
-                  tx.pure.u64(isLast ? minAmountOut.toString() : "0"),
-                  tx.pure.u128(sqrtPriceLimit),
-                  tx.object("0x6"),
-                ],
-              });
-            }
+            // Multi-hop: For now, skip multi-hop as it requires more complex handling
+            // Most dust tokens can be swapped in single hop via aggregator routes
+            console.warn(`[Vacuum] Skipping multi-hop swap for ${token.symbol} - not supported yet`);
+            continue;
           }
 
           totalValueUSD += token.valueUSD;

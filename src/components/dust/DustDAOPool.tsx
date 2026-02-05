@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import { RefreshCw, ExternalLink, CheckCircle2, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useCurrentAccount } from "@mysten/dapp-kit";
-import { useTokenBalances } from "@/hooks";
 import { useDustDAO } from "@/hooks/useDustDAO";
 import { VaultStats } from "./VaultStats";
 import { DepositPanel } from "./DepositPanel";
@@ -14,54 +13,63 @@ import { GovernancePanel } from "./GovernancePanel";
 import { SuccessAnimation } from "@/components/effects/SuccessAnimation";
 import { DEFAULT_DUST_THRESHOLD_USD, SUI_EXPLORER_TX_URL } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { TokenBalance } from "@/types";
 
 interface DustDAOPoolProps {
   dustThreshold?: number;
+  // Pass balances from parent to share state
+  sharedDustTokens?: TokenBalance[];
+  sharedBalances?: TokenBalance[];
+  onRefresh?: () => void;
 }
 
-export function DustDAOPool({ dustThreshold = DEFAULT_DUST_THRESHOLD_USD }: DustDAOPoolProps) {
+export function DustDAOPool({ 
+  dustThreshold = DEFAULT_DUST_THRESHOLD_USD,
+  sharedDustTokens,
+  sharedBalances,
+  onRefresh,
+}: DustDAOPoolProps) {
   const account = useCurrentAccount();
-  const [initialFetchDone, setInitialFetchDone] = useState(false);
+  const [localSelectedTokens, setLocalSelectedTokens] = useState<TokenBalance[]>([]);
   
-  const {
-    balances,
-    isLoading: isLoadingBalances,
-    fetchBalances,
-    toggleSelection,
-    selectAllDust,
-    deselectAll,
-    selectedTokens,
-    dustTokens,
-  } = useTokenBalances(dustThreshold);
+  // Use shared dust tokens from parent if provided
+  const dustTokens = sharedDustTokens || [];
+  const balances = sharedBalances || [];
+  const isLoadingBalances = false;
 
-  // Fetch balances when component mounts and account is available
-  useEffect(() => {
-    const doFetch = async () => {
-      if (account?.address) {
-        console.log('[DustDAOPool] Account connected:', account.address);
-        console.log('[DustDAOPool] Current dustTokens:', dustTokens.length);
-        console.log('[DustDAOPool] Current balances:', balances.length);
-        console.log('[DustDAOPool] Threshold:', dustThreshold);
-        
-        await fetchBalances();
-        setInitialFetchDone(true);
+  // Local selection management
+  const toggleSelection = (coinType: string) => {
+    setLocalSelectedTokens(prev => {
+      const exists = prev.find(t => t.coinType === coinType);
+      if (exists) {
+        return prev.filter(t => t.coinType !== coinType);
+      } else {
+        const token = dustTokens.find(t => t.coinType === coinType);
+        if (token) {
+          return [...prev, { ...token, selected: true }];
+        }
+        return prev;
       }
-    };
-    
-    doFetch();
-  }, [account?.address]);
+    });
+  };
 
-  // Also re-fetch when threshold changes
-  useEffect(() => {
-    if (account?.address && initialFetchDone) {
-      console.log('[DustDAOPool] Threshold changed to:', dustThreshold);
-      fetchBalances();
-    }
-  }, [dustThreshold]);
+  const selectAllDust = () => {
+    setLocalSelectedTokens(dustTokens.map(t => ({ ...t, selected: true })));
+  };
+
+  const deselectAll = () => {
+    setLocalSelectedTokens([]);
+  };
+
+  const selectedTokens = localSelectedTokens;
+  
+  const fetchBalances = () => {
+    onRefresh?.();
+  };
 
   // Debug log when dustTokens changes
   useEffect(() => {
-    console.log('[DustDAOPool] dustTokens updated:', dustTokens.length, dustTokens.map(t => t.symbol));
+    console.log('[DustDAOPool] dustTokens from parent:', dustTokens.length, dustTokens.map(t => t.symbol));
   }, [dustTokens]);
 
   const {
