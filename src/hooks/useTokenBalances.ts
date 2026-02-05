@@ -14,18 +14,19 @@ interface CoinBalance {
   lockedBalance: Record<string, string>;
 }
 
-interface BlockberryToken {
+interface TokenPriceData {
   coinType: string;
-  name: string;
-  symbol: string;
-  decimals: number;
-  iconUrl?: string;
-  price?: number;
-  priceChangePercentage24H?: number;
-  balance?: string;
-  objects?: number;
+  price: number;
+  symbol?: string;
+  decimals?: number;
+  logo?: string;
   usdValue?: number;
-  verified?: boolean;
+}
+
+interface PriceApiResponse {
+  success: boolean;
+  prices: Record<string, TokenPriceData>;
+  suiPrice: number;
 }
 
 export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_USD) {
@@ -35,145 +36,30 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch token data from Blockberry API (same as Sui Wallet uses)
-  const fetchBlockberryTokens = useCallback(async (address: string): Promise<Map<string, BlockberryToken>> => {
-    const tokenMap = new Map<string, BlockberryToken>();
-    
+  // Fetch prices from our API route (avoids CORS issues)
+  const fetchPricesFromApi = useCallback(async (
+    address: string,
+    coinTypes: string[]
+  ): Promise<{ prices: Record<string, TokenPriceData>; suiPrice: number }> => {
     try {
-      // Blockberry API - this is what Sui Wallet uses
-      const response = await fetch(
-        `https://api.blockberry.one/sui/v1/accounts/${address}/coins?page=0&size=50`,
-        {
-          headers: { 
-            "Accept": "application/json",
-          },
-        }
-      );
-      
+      const response = await fetch("/api/prices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, coinTypes }),
+      });
+
       if (response.ok) {
-        const data = await response.json();
-        console.log("[Blockberry] Response:", data);
-        
-        const tokens = data.content || data.data || data;
-        if (Array.isArray(tokens)) {
-          tokens.forEach((token: BlockberryToken) => {
-            if (token.coinType) {
-              tokenMap.set(token.coinType, token);
-            }
-          });
+        const data: PriceApiResponse = await response.json();
+        if (data.success) {
+          console.log("[API] Fetched prices:", Object.keys(data.prices).length);
+          return { prices: data.prices, suiPrice: data.suiPrice };
         }
       }
     } catch (err) {
-      console.error("[Blockberry] Failed to fetch:", err);
+      console.error("[API] Failed to fetch prices:", err);
     }
-    
-    // If Blockberry fails, try SuiVision API
-    if (tokenMap.size === 0) {
-      try {
-        const response = await fetch(
-          `https://api.suivision.xyz/api/account/${address}/coins`,
-          {
-            headers: { 
-              "Accept": "application/json",
-            },
-          }
-        );
-        
-        if (response.ok) {
-          const data = await response.json();
-          console.log("[SuiVision] Response:", data);
-          
-          const tokens = data.data || data.result || data;
-          if (Array.isArray(tokens)) {
-            tokens.forEach((token: Record<string, unknown>) => {
-              const coinType = token.coinType || token.type;
-              if (coinType && typeof coinType === 'string') {
-                tokenMap.set(coinType, {
-                  coinType: coinType,
-                  name: (token.name || token.symbol) as string,
-                  symbol: token.symbol as string,
-                  decimals: (token.decimals as number) || 9,
-                  iconUrl: (token.iconUrl || token.icon || token.logo) as string,
-                  price: token.price as number,
-                  balance: token.balance as string,
-                  usdValue: token.usdValue as number,
-                });
-              }
-            });
-          }
-        }
-      } catch (err) {
-        console.error("[SuiVision] Failed to fetch:", err);
-      }
-    }
-    
-    return tokenMap;
-  }, []);
 
-  // Fetch token prices from alternative sources
-  const fetchTokenPrices = useCallback(async (coinTypes: string[]): Promise<Map<string, number>> => {
-    const priceMap = new Map<string, number>();
-    
-    // Try fetching prices from multiple sources
-    for (const coinType of coinTypes) {
-      if (coinType === SUI_TYPE) continue;
-      
-      try {
-        // Try DexScreener
-        const response = await fetch(
-          `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(coinType)}`
-        );
-        
-        if (response.ok) {
-          const data = await response.json();
-          if (data.pairs && data.pairs.length > 0) {
-            const price = parseFloat(data.pairs[0].priceUsd) || 0;
-            if (price > 0) {
-              priceMap.set(coinType, price);
-              console.log(`[DexScreener] ${coinType}: $${price}`);
-            }
-          }
-        }
-      } catch (err) {
-        // Ignore individual price fetch errors
-      }
-      
-      // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    
-    return priceMap;
-  }, []);
-
-  // Fetch SUI price specifically
-  const fetchSuiPrice = useCallback(async (): Promise<number> => {
-    try {
-      // Try CoinGecko first
-      const response = await fetch(
-        "https://api.coingecko.com/api/v3/simple/price?ids=sui&vs_currencies=usd"
-      );
-      if (response.ok) {
-        const data = await response.json();
-        if (data.sui?.usd) return data.sui.usd;
-      }
-    } catch {
-      console.error("[CoinGecko] Failed to fetch SUI price");
-    }
-    
-    // Fallback to DexScreener
-    try {
-      const response = await fetch("https://api.dexscreener.com/latest/dex/tokens/sui");
-      if (response.ok) {
-        const data = await response.json();
-        if (data.pairs && data.pairs.length > 0) {
-          return parseFloat(data.pairs[0].priceUsd) || 0.95;
-        }
-      }
-    } catch {
-      console.error("[DexScreener] Failed to fetch SUI price");
-    }
-    
-    return 0.95; // Fallback price
+    return { prices: {}, suiPrice: 0.95 };
   }, []);
 
   const fetchBalances = useCallback(async () => {
@@ -187,10 +73,6 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
 
     try {
       console.log("[TokenBalances] Fetching balances for:", account.address);
-      
-      // Fetch from Blockberry first (has price data)
-      const blockberryData = await fetchBlockberryTokens(account.address);
-      console.log("[TokenBalances] Blockberry data:", blockberryData.size, "tokens");
       
       // Get all coin balances from Sui client
       const allBalances = await client.getAllBalances({
@@ -207,21 +89,14 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
 
       console.log("[TokenBalances] Non-zero balances:", nonZeroBalances.length);
 
-      // Get coin types that need price lookup
-      const coinTypesNeedingPrices: string[] = [];
-      nonZeroBalances.forEach((balance: CoinBalance) => {
-        if (balance.coinType !== SUI_TYPE && !blockberryData.has(balance.coinType)) {
-          coinTypesNeedingPrices.push(balance.coinType);
-        }
-      });
-
-      // Fetch additional prices if needed
-      const additionalPrices = coinTypesNeedingPrices.length > 0 
-        ? await fetchTokenPrices(coinTypesNeedingPrices.slice(0, 10)) // Limit to 10 to avoid rate limiting
-        : new Map<string, number>();
-
-      // Fetch SUI price
-      const suiPrice = await fetchSuiPrice();
+      // Get all coin types
+      const allCoinTypes = nonZeroBalances.map((b: CoinBalance) => b.coinType);
+      
+      // Fetch prices from our API route (server-side to avoid CORS)
+      const { prices: priceData, suiPrice } = await fetchPricesFromApi(
+        account.address,
+        allCoinTypes
+      );
       console.log("[TokenBalances] SUI price:", suiPrice);
 
       // Process each token
@@ -229,7 +104,7 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
         nonZeroBalances.map(async (balance: CoinBalance) => {
           const coinType = balance.coinType;
           const tokenInfo = getTokenInfo(coinType);
-          const blockberryToken = blockberryData.get(coinType);
+          const apiTokenData = priceData[coinType];
           
           // Get coin objects for this type
           const coins = await client.getCoins({
@@ -257,31 +132,28 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
             // Ignore metadata fetch errors
           }
           
-          // Use decimals from chain metadata (most accurate), then Blockberry, token info, or default to 9
-          const decimals = chainMetadata?.decimals ?? blockberryToken?.decimals ?? tokenInfo?.decimals ?? 9;
+          // Use decimals from chain metadata (most accurate), then API data, token info, or default to 9
+          const decimals = chainMetadata?.decimals ?? apiTokenData?.decimals ?? tokenInfo?.decimals ?? 9;
           
           // Get price and logo
           let priceUSD = 0;
-          let logo = chainMetadata?.iconUrl || tokenInfo?.logo || blockberryToken?.iconUrl || null;
+          let logo = chainMetadata?.iconUrl || apiTokenData?.logo || tokenInfo?.logo || null;
           
           if (coinType === SUI_TYPE) {
             priceUSD = suiPrice;
-          } else if (blockberryToken?.price && blockberryToken.price > 0) {
-            // Use Blockberry price (most accurate, same as wallet shows)
-            priceUSD = blockberryToken.price;
-            console.log(`[Blockberry] ${blockberryToken.symbol}: price=$${priceUSD}`);
-          } else if (additionalPrices.has(coinType)) {
-            priceUSD = additionalPrices.get(coinType) || 0;
+          } else if (apiTokenData?.price && apiTokenData.price > 0) {
+            priceUSD = apiTokenData.price;
+            console.log(`[API] ${apiTokenData.symbol || coinType}: price=$${priceUSD}`);
           }
 
           const balanceFormatted = Number(formatBalance(totalBalance.toString(), decimals));
           
-          // Use Blockberry's USD value if available, otherwise calculate
-          let valueUSD = blockberryToken?.usdValue || (balanceFormatted * priceUSD);
+          // Use API's USD value if available, otherwise calculate
+          let valueUSD = apiTokenData?.usdValue || (balanceFormatted * priceUSD);
           
           // Get symbol and name from multiple sources (chain metadata is most accurate)
-          const symbol = chainMetadata?.symbol || blockberryToken?.symbol || tokenInfo?.symbol || extractSymbolFromType(coinType);
-          const name = chainMetadata?.name || blockberryToken?.name || tokenInfo?.name || symbol;
+          const symbol = chainMetadata?.symbol || apiTokenData?.symbol || tokenInfo?.symbol || extractSymbolFromType(coinType);
+          const name = chainMetadata?.name || tokenInfo?.name || symbol;
 
           console.log(`[TokenBalances] ${symbol}: balance=${balanceFormatted}, price=$${priceUSD}, value=$${valueUSD}, decimals=${decimals}`);
 
@@ -338,7 +210,7 @@ export function useTokenBalances(dustThreshold: number = DEFAULT_DUST_THRESHOLD_
     } finally {
       setIsLoading(false);
     }
-  }, [client, account?.address, dustThreshold, fetchBlockberryTokens, fetchTokenPrices, fetchSuiPrice]);
+  }, [client, account?.address, dustThreshold, fetchPricesFromApi]);
 
   useEffect(() => {
     fetchBalances();
