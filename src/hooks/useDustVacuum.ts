@@ -657,9 +657,9 @@ export function useDustVacuum() {
           );
 
           // Build swap call(s) based on route
-          // Use Cetus INTEGRATE_PUBLISHED_AT for swap operations (pool_script module)
-          // The published_at address is the actual deployed version to use
+          // Use Cetus INTEGRATE_PUBLISHED_AT for swap operations (pool_script_v2 module)
           const integratePackage = CETUS_CONFIG.mainnet.INTEGRATE_PUBLISHED_AT;
+          const swapModule = CETUS_CONFIG.mainnet.SWAP_MODULE || "pool_script_v2";
           
           if (route.routes.length === 1) {
             // Single-hop swap
@@ -670,7 +670,7 @@ export function useDustVacuum() {
               : "4295048016";
 
             tx.moveCall({
-              target: `${integratePackage}::pool_script::${swapFn}`,
+              target: `${integratePackage}::${swapModule}::${swapFn}`,
               typeArguments: [step.coinTypeA, step.coinTypeB],
               arguments: [
                 tx.object(CETUS_CONFIG.mainnet.GLOBAL_CONFIG_ID),
@@ -697,7 +697,7 @@ export function useDustVacuum() {
               const isLast = i === route.routes.length - 1;
 
               tx.moveCall({
-                target: `${integratePackage}::pool_script::${swapFn}`,
+                target: `${integratePackage}::${swapModule}::${swapFn}`,
                 typeArguments: [step.coinTypeA, step.coinTypeB],
                 arguments: [
                   tx.object(CETUS_CONFIG.mainnet.GLOBAL_CONFIG_ID),

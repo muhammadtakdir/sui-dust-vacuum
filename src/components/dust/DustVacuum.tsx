@@ -16,6 +16,8 @@ import {
   Info,
   Flame,
   Gift,
+  Search,
+  ArrowRightLeft,
 } from "lucide-react";
 import { useTokenBalances, useDustVacuum } from "@/hooks";
 import { TokenCard, TokenCardSkeleton } from "./TokenCard";
@@ -56,10 +58,14 @@ export function DustVacuum() {
     updateTokenAction,
   } = useTokenBalances(dustThreshold);
 
-  const { state, progress, currentStep, result, routeResults, vacuum, burnTokens, donateTokens, reset } = useDustVacuum();
+  const { state, progress, currentStep, result, routeResults, vacuum, burnTokens, donateTokens, checkRoutes, reset } = useDustVacuum();
 
   const nonDustTokens = balances.filter((t) => !t.isDust && t.coinType !== "0x2::sui::SUI");
   const suiToken = balances.find((t) => t.coinType === "0x2::sui::SUI");
+
+  // Track if routes have been checked for current selection
+  const [routesChecked, setRoutesChecked] = useState(false);
+  const [isCheckingRoutes, setIsCheckingRoutes] = useState(false);
 
   // Check how many selected tokens have no routes
   const tokensWithoutRoutes = routeResults.filter(r => !r.hasRoute);
@@ -76,6 +82,32 @@ export function DustVacuum() {
     const routeCheck = routeResults.find(r => r.coinType === t.coinType);
     return routeCheck && !routeCheck.hasRoute && (tokenActions[t.coinType] === 'donate' || t.action === 'donate');
   });
+
+  // Check routes when clicking the check button
+  const handleCheckRoutes = async () => {
+    if (selectedTokens.length === 0) return;
+    setIsCheckingRoutes(true);
+    await checkRoutes(selectedTokens);
+    setRoutesChecked(true);
+    setIsCheckingRoutes(false);
+  };
+
+  // Reset route check status when selection changes
+  const handleToggleSelection = (coinType: string) => {
+    toggleSelection(coinType);
+    setRoutesChecked(false);
+  };
+
+  const handleSelectAllDust = () => {
+    selectAllDust();
+    setRoutesChecked(false);
+  };
+
+  const handleDeselectAll = () => {
+    deselectAll();
+    setRoutesChecked(false);
+    setTokenActions({});
+  };
 
   // Handle action change for a token
   const handleActionChange = useCallback((coinType: string, action: 'swap' | 'burn' | 'donate') => {
@@ -326,21 +358,64 @@ export function DustVacuum() {
                       </div>
                     ) : dustTokens.length > 0 ? (
                       <>
-                        <div className="flex gap-2 mb-4">
+                        <div className="flex flex-wrap gap-2 mb-4 items-center">
                           <button
-                            onClick={selectAllDust}
+                            onClick={handleSelectAllDust}
                             className="text-sm text-sui-blue hover:underline"
                           >
                             Select All Dust
                           </button>
                           <span className="text-sui-muted">|</span>
                           <button
-                            onClick={deselectAll}
+                            onClick={handleDeselectAll}
                             className="text-sm text-sui-muted hover:text-white"
                           >
                             Deselect All
                           </button>
+                          {selectedTokens.length > 0 && (
+                            <>
+                              <span className="text-sui-muted">|</span>
+                              <button
+                                onClick={handleCheckRoutes}
+                                disabled={isCheckingRoutes || state === 'loading'}
+                                className="flex items-center gap-1 text-sm text-sui-cyan hover:underline disabled:opacity-50"
+                              >
+                                <Search className="w-3 h-3" />
+                                {isCheckingRoutes ? 'Checking...' : 'Check Routes'}
+                              </button>
+                            </>
+                          )}
                         </div>
+
+                        {/* Route Status Summary */}
+                        {routesChecked && selectedTokens.length > 0 && (
+                          <motion.div
+                            className="mb-4 p-3 rounded-lg bg-sui-darker border border-sui-border"
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                          >
+                            <div className="flex items-center gap-2 mb-2">
+                              <ArrowRightLeft className="w-4 h-4 text-sui-cyan" />
+                              <span className="text-sm font-medium">Route Check Results</span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-sm">
+                              <div className="flex items-center gap-2">
+                                <CheckCircle2 className="w-4 h-4 text-sui-success" />
+                                <span className="text-sui-success">{tokensWithRoutes.length} can swap to SUI</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <AlertTriangle className="w-4 h-4 text-sui-warning" />
+                                <span className="text-sui-warning">{tokensWithoutRoutes.length} no liquidity</span>
+                              </div>
+                            </div>
+                            {tokensWithoutRoutes.length > 0 && (
+                              <p className="text-xs text-sui-muted mt-2">
+                                Tokens without liquidity can be burned or donated to DustDAO
+                              </p>
+                            )}
+                          </motion.div>
+                        )}
+
                         <div className="grid sm:grid-cols-2 gap-4">
                           {dustTokens.map((token, index) => {
                             // Check if this token has a route
@@ -348,7 +423,7 @@ export function DustVacuum() {
                             const hasNoRoute = routeCheck && !routeCheck.hasRoute;
                             const tokenWithRoute = {
                               ...token,
-                              hasRoute: !hasNoRoute,
+                              hasRoute: routeCheck ? !hasNoRoute : undefined, // undefined = not checked yet
                               action: tokenActions[token.coinType] || token.action,
                             };
                             
@@ -356,7 +431,7 @@ export function DustVacuum() {
                               <TokenCard
                                 key={token.coinType}
                                 token={tokenWithRoute}
-                                onSelect={() => toggleSelection(token.coinType)}
+                                onSelect={() => handleToggleSelection(token.coinType)}
                                 index={index}
                                 showActionBadge={hasNoRoute && token.selected}
                                 onActionChange={(action) => handleActionChange(token.coinType, action)}
@@ -413,7 +488,7 @@ export function DustVacuum() {
                           const hasNoRoute = routeCheck && !routeCheck.hasRoute;
                           const tokenWithRoute = {
                             ...token,
-                            hasRoute: !hasNoRoute,
+                            hasRoute: routeCheck ? !hasNoRoute : undefined,
                             action: tokenActions[token.coinType] || token.action,
                           };
                           
@@ -421,7 +496,7 @@ export function DustVacuum() {
                             <TokenCard
                               key={token.coinType}
                               token={tokenWithRoute}
-                              onSelect={() => toggleSelection(token.coinType)}
+                              onSelect={() => handleToggleSelection(token.coinType)}
                               index={index}
                               showActionBadge={hasNoRoute && token.selected}
                               onActionChange={(action) => handleActionChange(token.coinType, action)}

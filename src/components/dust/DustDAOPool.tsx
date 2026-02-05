@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion";
 import { RefreshCw, ExternalLink, CheckCircle2 } from "lucide-react";
+import { useEffect } from "react";
 import { useTokenBalances } from "@/hooks";
 import { useDustDAO } from "@/hooks/useDustDAO";
 import { VaultStats } from "./VaultStats";
@@ -28,6 +29,11 @@ export function DustDAOPool({ dustThreshold = DEFAULT_DUST_THRESHOLD_USD }: Dust
     selectedTokens,
     dustTokens,
   } = useTokenBalances(dustThreshold);
+
+  // Fetch balances on mount when dustThreshold changes
+  useEffect(() => {
+    fetchBalances();
+  }, [dustThreshold, fetchBalances]);
 
   const {
     state,

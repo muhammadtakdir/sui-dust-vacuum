@@ -42,18 +42,19 @@ export const KNOWN_TOKENS = {
 export const CETUS_CONFIG = {
   // Mainnet addresses (from Cetus SDK: https://github.com/CetusProtocol/cetus-clmm-sui-sdk)
   mainnet: {
-    GLOBAL_CONFIG_ID: "0xdaa46292632c3c4d8f31f23ea0f9b36a28ff3677e9684980e4438403a67a3d8f",
-    POOLS_ID: "0xf699e7f2571ca37a32a7b0e3ffce5926cab5e9ce03e1a4ca9a3f90dc1f11f4aa",
+    // CLMM Pool global_config_id from SDK config
+    GLOBAL_CONFIG_ID: "0x0408fa4e4a4c03cc0de8f23d0c2bbfe8913d178713c9a271ed4080973fe42d8f",
+    POOLS_ID: "0x15b6a27dd9ae03eb455aba03b39e29aad74abd3757b8e18c0755651b2ae5b71e",
     PARTNER_CAP_ID: "0x3a5aa90ffa33d09100d7b6941ea1c0ffe6ab66e77062ddd26320c1b073aabb10",
     // CLMM Pool Package (for pool operations)
     CLMM_PACKAGE: "0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb",
-    // Integrate Package (for swap operations - pool_script module)
-    // package_id from Cetus SDK mainnet config
+    CLMM_PUBLISHED_AT: "0xc6faf3703b0e8ba9ed06b7851134bbbe7565eb35ff823fd78432baa4cbeaa12e",
+    // Integrate Package (for swap operations - pool_script_v2 module)
     INTEGRATE_PACKAGE: "0x996c4d9480708fb8b92aa7acf819fb0497b5ec8e65ba06601cae2fb6db3312c3",
-    // published_at is the actual deployed version to use
     INTEGRATE_PUBLISHED_AT: "0x2d8c2e0fc6dd25b0214b3fa747e0fd27fd54608142cd2e4f64c1cd350cc4add4",
+    // Swap module name (pool_script_v2 for newer version)
+    SWAP_MODULE: "pool_script_v2",
     AGGREGATOR_URL: "https://api-sui.cetus.zone/router_v2/find_routes",
-    // Alternative API endpoints
     ALT_AGGREGATOR_URL: "https://api-sui.cetus.zone/router/find_routes",
     SWAP_URL: "https://api-sui.cetus.zone/v2/sui/swap",
   },

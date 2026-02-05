@@ -33,6 +33,8 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
   const canSelect = isSelectable && !isSui;
   const [imageError, setImageError] = useState(false);
   const hasNoRoute = token.hasRoute === false;
+  const hasRoute = token.hasRoute === true;
+  const routeUnchecked = token.hasRoute === undefined;
 
   return (
     <motion.div
@@ -41,6 +43,7 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
         compact ? "p-3" : "p-4",
         token.selected ? "border-sui-blue shadow-lg shadow-sui-blue/20" : "border-sui-border",
         token.isDust && !token.selected && "border-sui-warning/30",
+        hasNoRoute && token.selected && "border-red-500/50",
         isSui && "border-sui-success/30 cursor-default",
         !canSelect && "cursor-default"
       )}
@@ -68,8 +71,21 @@ export function TokenCard({ token, onSelect, isSelectable = true, index, compact
         </motion.div>
       )}
 
-      {/* Dust badge */}
-      {token.isDust && !hasNoRoute && (
+      {/* Route status badge */}
+      {!isSui && token.selected && hasRoute && (
+        <motion.div
+          className="absolute top-3 left-3 px-2 py-0.5 bg-sui-success/20 border border-sui-success/30 rounded-full flex items-center gap-1"
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ delay: 0.2 }}
+        >
+          <Check className="w-3 h-3 text-sui-success" />
+          <span className="text-xs text-sui-success font-medium">Swappable</span>
+        </motion.div>
+      )}
+
+      {/* Dust badge (only when not selected or route unchecked) */}
+      {token.isDust && !hasNoRoute && (!token.selected || routeUnchecked) && (
         <motion.div
           className="absolute top-3 left-3 px-2 py-0.5 bg-sui-warning/20 border border-sui-warning/30 rounded-full flex items-center gap-1"
           initial={{ scale: 0 }}
