@@ -21,7 +21,7 @@ interface DustDAOPoolProps {
 
 export function DustDAOPool({ dustThreshold = DEFAULT_DUST_THRESHOLD_USD }: DustDAOPoolProps) {
   const account = useCurrentAccount();
-  const [hasFetched, setHasFetched] = useState(false);
+  const [initialFetchDone, setInitialFetchDone] = useState(false);
   
   const {
     balances,
@@ -34,22 +34,35 @@ export function DustDAOPool({ dustThreshold = DEFAULT_DUST_THRESHOLD_USD }: Dust
     dustTokens,
   } = useTokenBalances(dustThreshold);
 
-  // Fetch balances when account connects or dustThreshold changes
+  // Fetch balances when component mounts and account is available
   useEffect(() => {
-    if (account?.address && !hasFetched) {
-      console.log('[DustDAOPool] Fetching balances for:', account.address, 'threshold:', dustThreshold);
-      fetchBalances();
-      setHasFetched(true);
-    }
-  }, [account?.address, dustThreshold, fetchBalances, hasFetched]);
+    const doFetch = async () => {
+      if (account?.address) {
+        console.log('[DustDAOPool] Account connected:', account.address);
+        console.log('[DustDAOPool] Current dustTokens:', dustTokens.length);
+        console.log('[DustDAOPool] Current balances:', balances.length);
+        console.log('[DustDAOPool] Threshold:', dustThreshold);
+        
+        await fetchBalances();
+        setInitialFetchDone(true);
+      }
+    };
+    
+    doFetch();
+  }, [account?.address]);
 
-  // Re-fetch when threshold changes
+  // Also re-fetch when threshold changes
   useEffect(() => {
-    if (account?.address && hasFetched) {
-      console.log('[DustDAOPool] Threshold changed, re-fetching...');
+    if (account?.address && initialFetchDone) {
+      console.log('[DustDAOPool] Threshold changed to:', dustThreshold);
       fetchBalances();
     }
   }, [dustThreshold]);
+
+  // Debug log when dustTokens changes
+  useEffect(() => {
+    console.log('[DustDAOPool] dustTokens updated:', dustTokens.length, dustTokens.map(t => t.symbol));
+  }, [dustTokens]);
 
   const {
     state,

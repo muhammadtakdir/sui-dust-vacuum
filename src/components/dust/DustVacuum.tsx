@@ -71,16 +71,25 @@ export function DustVacuum() {
   const tokensWithoutRoutes = routeResults.filter(r => !r.hasRoute);
   const tokensWithRoutes = routeResults.filter(r => r.hasRoute);
 
-  // Get tokens to burn (selected tokens that have no route and action is 'burn')
+  // Get tokens to swap (selected tokens that HAVE route)
+  const tokensToSwap = selectedTokens.filter(t => {
+    const routeCheck = routeResults.find(r => r.coinType === t.coinType);
+    return routeCheck && routeCheck.hasRoute;
+  });
+
+  // Get tokens to burn (selected tokens that have NO route - default action for no-route tokens)
+  // Unless user explicitly chose 'donate'
   const tokensToBurn = selectedTokens.filter(t => {
     const routeCheck = routeResults.find(r => r.coinType === t.coinType);
-    return routeCheck && !routeCheck.hasRoute && (tokenActions[t.coinType] === 'burn' || t.action === 'burn');
+    const hasNoRoute = routeCheck && !routeCheck.hasRoute;
+    const action = tokenActions[t.coinType] || 'burn'; // Default to burn for no-route tokens
+    return hasNoRoute && action !== 'donate';
   });
 
   // Get tokens to donate (selected tokens that have no route and action is 'donate')  
   const tokensToDonate = selectedTokens.filter(t => {
     const routeCheck = routeResults.find(r => r.coinType === t.coinType);
-    return routeCheck && !routeCheck.hasRoute && (tokenActions[t.coinType] === 'donate' || t.action === 'donate');
+    return routeCheck && !routeCheck.hasRoute && tokenActions[t.coinType] === 'donate';
   });
 
   // Auto-check routes when selection changes
@@ -142,14 +151,26 @@ export function DustVacuum() {
   const handleVacuum = async () => {
     if (selectedTokens.length === 0) return;
     
-    // If there are tokens to burn, show confirmation dialog first
+    // Check if routes have been checked
+    if (!routesChecked && routeResults.length === 0) {
+      // Auto-check routes first
+      setIsCheckingRoutes(true);
+      await checkRoutes(selectedTokens);
+      setRoutesChecked(true);
+      setIsCheckingRoutes(false);
+      return; // User needs to click again after seeing route results
+    }
+    
+    // If there are tokens to burn (no route), show confirmation dialog first
     if (tokensToBurn.length > 0) {
       setShowBurnConfirm(true);
       return;
     }
     
-    // Otherwise proceed with normal vacuum
-    await vacuum(selectedTokens);
+    // Otherwise proceed with normal vacuum (all tokens have routes)
+    if (tokensToSwap.length > 0) {
+      await vacuum(tokensToSwap);
+    }
   };
 
   const handleBurnConfirm = async () => {
@@ -161,11 +182,6 @@ export function DustVacuum() {
     }
     
     // Then swap the tokens with routes
-    const tokensToSwap = selectedTokens.filter(t => {
-      const routeCheck = routeResults.find(r => r.coinType === t.coinType);
-      return !routeCheck || routeCheck.hasRoute;
-    });
-    
     if (tokensToSwap.length > 0) {
       await vacuum(tokensToSwap);
     }
