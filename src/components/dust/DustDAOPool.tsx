@@ -1,8 +1,9 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { RefreshCw, ExternalLink, CheckCircle2 } from "lucide-react";
-import { useEffect } from "react";
+import { RefreshCw, ExternalLink, CheckCircle2, Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useCurrentAccount } from "@mysten/dapp-kit";
 import { useTokenBalances } from "@/hooks";
 import { useDustDAO } from "@/hooks/useDustDAO";
 import { VaultStats } from "./VaultStats";
@@ -19,6 +20,9 @@ interface DustDAOPoolProps {
 }
 
 export function DustDAOPool({ dustThreshold = DEFAULT_DUST_THRESHOLD_USD }: DustDAOPoolProps) {
+  const account = useCurrentAccount();
+  const [hasFetched, setHasFetched] = useState(false);
+  
   const {
     balances,
     isLoading: isLoadingBalances,
@@ -30,10 +34,22 @@ export function DustDAOPool({ dustThreshold = DEFAULT_DUST_THRESHOLD_USD }: Dust
     dustTokens,
   } = useTokenBalances(dustThreshold);
 
-  // Fetch balances on mount when dustThreshold changes
+  // Fetch balances when account connects or dustThreshold changes
   useEffect(() => {
-    fetchBalances();
-  }, [dustThreshold, fetchBalances]);
+    if (account?.address && !hasFetched) {
+      console.log('[DustDAOPool] Fetching balances for:', account.address, 'threshold:', dustThreshold);
+      fetchBalances();
+      setHasFetched(true);
+    }
+  }, [account?.address, dustThreshold, fetchBalances, hasFetched]);
+
+  // Re-fetch when threshold changes
+  useEffect(() => {
+    if (account?.address && hasFetched) {
+      console.log('[DustDAOPool] Threshold changed, re-fetching...');
+      fetchBalances();
+    }
+  }, [dustThreshold]);
 
   const {
     state,

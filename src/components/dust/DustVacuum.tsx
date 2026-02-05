@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from "framer-motion";
 import { useCurrentAccount, ConnectButton } from "@mysten/dapp-kit";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import {
   Wind,
   RefreshCw,
@@ -83,7 +83,32 @@ export function DustVacuum() {
     return routeCheck && !routeCheck.hasRoute && (tokenActions[t.coinType] === 'donate' || t.action === 'donate');
   });
 
-  // Check routes when clicking the check button
+  // Auto-check routes when selection changes
+  const prevSelectedRef = useRef<string[]>([]);
+  
+  useEffect(() => {
+    const currentIds = selectedTokens.map(t => t.coinType).sort().join(',');
+    const prevIds = prevSelectedRef.current.sort().join(',');
+    
+    // Only check if selection actually changed and has tokens
+    if (currentIds !== prevIds && selectedTokens.length > 0 && state === 'idle') {
+      prevSelectedRef.current = selectedTokens.map(t => t.coinType);
+      
+      // Auto check routes for selected tokens
+      const checkRoutesAsync = async () => {
+        setIsCheckingRoutes(true);
+        await checkRoutes(selectedTokens);
+        setRoutesChecked(true);
+        setIsCheckingRoutes(false);
+      };
+      checkRoutesAsync();
+    } else if (selectedTokens.length === 0) {
+      prevSelectedRef.current = [];
+      setRoutesChecked(false);
+    }
+  }, [selectedTokens, checkRoutes, state]);
+
+  // Manual check routes button handler
   const handleCheckRoutes = async () => {
     if (selectedTokens.length === 0) return;
     setIsCheckingRoutes(true);
@@ -95,18 +120,17 @@ export function DustVacuum() {
   // Reset route check status when selection changes
   const handleToggleSelection = (coinType: string) => {
     toggleSelection(coinType);
-    setRoutesChecked(false);
   };
 
   const handleSelectAllDust = () => {
     selectAllDust();
-    setRoutesChecked(false);
+    // Route check will auto-trigger via useEffect
   };
 
   const handleDeselectAll = () => {
     deselectAll();
-    setRoutesChecked(false);
     setTokenActions({});
+    // Route check will auto-clear via useEffect
   };
 
   // Handle action change for a token
