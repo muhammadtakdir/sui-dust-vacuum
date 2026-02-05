@@ -4,9 +4,12 @@
 
 A community-driven dust cleaner dApp built on Sui Network with Cetus Aggregator integration. Transform those frustrating micro-balances into real value.
 
+## 🌐 Live Demo: [https://sui-dust-vacuum.vercel.app](https://sui-dust-vacuum.vercel.app)
+
 ![Sui Dust Vacuum](https://img.shields.io/badge/Built%20on-Sui%20Network-4DA2FF?style=for-the-badge)
 ![Cetus Integration](https://img.shields.io/badge/Powered%20by-Cetus%20Aggregator-00D4AA?style=for-the-badge)
 ![Move 2024](https://img.shields.io/badge/Smart%20Contract-Move%202024-FF6B6B?style=for-the-badge)
+![Live Demo](https://img.shields.io/badge/Demo-Live%20on%20Vercel-000000?style=for-the-badge&logo=vercel)
 
 ---
 
@@ -391,10 +394,12 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## 📞 Links
 
+- **🌐 Live Demo**: [https://sui-dust-vacuum.vercel.app](https://sui-dust-vacuum.vercel.app)
 - [Sui Network](https://sui.io)
 - [Cetus Protocol](https://cetus.zone)
 - [Sui Explorer](https://suiscan.xyz/mainnet)
 - [Contract on Explorer](https://suiscan.xyz/mainnet/object/0xcbcb622f6a47404be4c28d75dc47fdc0abfd2e8a730eb104495a404e5b2c56e4)
+- [GitHub Repository](https://github.com/muhammadtakdir/sui-dust-vacuum)
 
 ---
 
