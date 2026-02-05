@@ -1,0 +1,10 @@
+[package]
+name = "dust_vacuum"
+edition = "2024"
+version = "1.0.0"
+
+[dependencies]
+# Auto-dependency will be used by Sui CLI
+
+[addresses]
+dust_vacuum = "0x0"
