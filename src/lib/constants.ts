@@ -14,11 +14,6 @@ export const DUST_VACUUM_CONTRACT = {
   },
   mainnet: {
     // v3: Architecture Upgrade - Feb 6, 2026
-    // - Refactored to use Bag for unified storage (removed TokenVaults)
-    // - Implemented Round History & Deposit Receipts for async claiming
-    // - Removed admin wallet dependency
-    // TX: DTibjxAB3pGEG1rSvjnEjgwwEHm3dzKF7TK6ATXWsykb
-    // Previous v2: 0xcbcb622f6a47404be4c28d75dc47fdc0abfd2e8a730eb104495a404e5b2c56e4
     PACKAGE_ID: "0xc66313cc4815b4fc6ecd2bdf4ccbf3c0277da40b2cb2562c6ab996b91b25c9c5",
     DUST_VAULT_ID: "0xb8164ae8b51ac2d79d94fd6f653815db6d1543c4fc0d534133043a907e8c40f1",
     ADMIN_CAP_ID: "0x4de73e07b3f08b32d52403e06e6029ff50b3e727811fc548891d9dfc70ddf1e2",
@@ -57,8 +52,9 @@ export const CETUS_CONFIG = {
     INTEGRATE_PUBLISHED_AT: "0x2d8c2e0fc6dd25b0214b3fa747e0fd27fd54608142cd2e4f64c1cd350cc4add4",
     // Swap module name (pool_script_v2 for newer version)
     SWAP_MODULE: "pool_script_v2",
-    AGGREGATOR_URL: "https://api-sui.cetus.zone/router_v2/find_routes",
-    ALT_AGGREGATOR_URL: "https://api-sui.cetus.zone/router/find_routes",
+    // Updated to V3 Aggregator URL
+    AGGREGATOR_URL: "https://api-sui.cetus.zone/router_v3/find_routes",
+    ALT_AGGREGATOR_URL: "https://api-sui.cetus.zone/router/find_routes", // V1/V2 fallback
     SWAP_URL: "https://api-sui.cetus.zone/v2/sui/swap",
   },
   testnet: {
@@ -66,7 +62,7 @@ export const CETUS_CONFIG = {
     POOLS_ID: "0x50eb61dd5928cec5ea04711a2e9b72e5237e79e9fbcd2ce3d5469dc8708e0ee2",
     PARTNER_CAP_ID: "",
     CLMM_PACKAGE: "0x1eabed72c53feb3805120a081dc15963c204dc8d091542592abaf7a35689b2fb",
-    AGGREGATOR_URL: "https://api-sui.cetus.zone/router_v2/find_routes",
+    AGGREGATOR_URL: "https://api-sui.cetus.zone/router_v3/find_routes",
   },
 };
 

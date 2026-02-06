@@ -30,38 +30,42 @@ export function DustDAOPool({
   onRefresh,
 }: DustDAOPoolProps) {
   const account = useCurrentAccount();
-  const [localSelectedTokens, setLocalSelectedTokens] = useState<TokenBalance[]>([]);
+  const [localSelectedCoinTypes, setLocalSelectedCoinTypes] = useState<Set<string>>(new Set());
   
   // Use shared dust tokens from parent if provided
-  const dustTokens = sharedDustTokens || [];
+  const rawDustTokens = sharedDustTokens || [];
   const balances = sharedBalances || [];
   const isLoadingBalances = false;
 
+  // Create dustTokens with selection state merged
+  const dustTokens = rawDustTokens.map(token => ({
+    ...token,
+    selected: localSelectedCoinTypes.has(token.coinType),
+  }));
+
   // Local selection management
   const toggleSelection = (coinType: string) => {
-    setLocalSelectedTokens(prev => {
-      const exists = prev.find(t => t.coinType === coinType);
-      if (exists) {
-        return prev.filter(t => t.coinType !== coinType);
+    setLocalSelectedCoinTypes(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(coinType)) {
+        newSet.delete(coinType);
       } else {
-        const token = dustTokens.find(t => t.coinType === coinType);
-        if (token) {
-          return [...prev, { ...token, selected: true }];
-        }
-        return prev;
+        newSet.add(coinType);
       }
+      return newSet;
     });
   };
 
   const selectAllDust = () => {
-    setLocalSelectedTokens(dustTokens.map(t => ({ ...t, selected: true })));
+    setLocalSelectedCoinTypes(new Set(rawDustTokens.map(t => t.coinType)));
   };
 
   const deselectAll = () => {
-    setLocalSelectedTokens([]);
+    setLocalSelectedCoinTypes(new Set());
   };
 
-  const selectedTokens = localSelectedTokens;
+  // Get selected tokens with full data
+  const selectedTokens = rawDustTokens.filter(t => localSelectedCoinTypes.has(t.coinType));
   
   const fetchBalances = () => {
     onRefresh?.();
@@ -89,27 +93,23 @@ export function DustDAOPool({
     voteOnProposal,
     openVault,
     closeVault,
-    createTokenVault,
-    newRound,
+    setTargetUsdValue,
     refresh,
     reset,
   } = useDustDAO();
 
-  // Handle deposit
+  // Handle deposit - use unified deposit function
   const handleDeposit = async () => {
-    if (selectedTokens.length === 0) return;
+    if (selectedTokens.length === 0) {
+      console.warn("[DustDAO] No tokens selected");
+      return;
+    }
     
-    // For now, we'll use a simple approach - in production, you'd query token vault IDs
-    // This is a placeholder - token vaults need to be created by admin first
-    const tokenVaultIds: Record<string, string> = {
-      // These would be fetched from chain or stored in config
-      // Example: "0x...::cetus::CETUS": "0x...tokenVaultId"
-    };
-
-    // Show warning if no token vaults configured
-    console.warn("[DustDAO] Token vaults need to be created by admin first");
+    console.log("[DustDAO] Depositing tokens:", selectedTokens.map(t => t.symbol));
     
-    await depositDust(selectedTokens, tokenVaultIds);
+    // Use unified deposit function
+    // This deposits tokens to the unified Bag storage and mints receipt
+    await depositDust(selectedTokens);
   };
 
   // Handle close modal
@@ -175,8 +175,7 @@ export function DustDAOPool({
             isLoading={state === "admin-action"}
             onOpenVault={openVault}
             onCloseVault={closeVault}
-            onNewRound={newRound}
-            onCreateTokenVault={createTokenVault}
+            onSetTarget={setTargetUsdValue}
           />
         </div>
 

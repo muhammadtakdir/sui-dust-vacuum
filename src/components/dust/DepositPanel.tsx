@@ -131,7 +131,7 @@ export function DepositPanel({
                 {/* Info */}
                 <div className="p-3 bg-sui-blue/10 border border-sui-blue/30 rounded-xl mb-4">
                   <p className="text-sm text-sui-muted">
-                    <span className="text-sui-blue font-medium">How it works:</span> Your dust will be pooled with other users. When admin executes batch swap, you&apos;ll receive SUI rewards proportional to your share (minus 2% fee).
+                    <span className="text-sui-blue font-medium">Pool Mode:</span> Your dust will be pooled with the community. When the collection target is reached, admin will batch swap all tokens to SUI. You receive SUI proportional to your share.
                   </p>
                 </div>
 

@@ -123,6 +123,8 @@ User C deposits: 1.2 USDC ($1.20)                    = $1.20 shares
 
 Vault Total: $5.51 (551 shares)
 
+Notes: Token vaults are **automatically created on-chain** when users deposit a new token type. Tokens are **locked in the DustVault system** (per-token vaults) — not sent to an admin wallet — ensuring non-custodial, trustless deposits.
+
 Phase 2: BATCH SWAP (Admin/Keeper)
 ──────────────────────────────────
 Admin clicks "Batch Swap All Dust"
@@ -312,26 +314,34 @@ sui-dust-vacuum/
 │   ├── app/                    # Next.js App Router
 │   │   ├── layout.tsx          # Root layout with fonts
 │   │   ├── page.tsx            # Main page
-│   │   └── providers.tsx       # Sui + React Query providers
+│   │   ├── providers.tsx       # Sui + React Query providers
+│   │   └── api/prices/         # Price API route
 │   ├── components/
-│   │   ├── dust-vacuum/        # Main vacuum components
+│   │   ├── dust/               # Main vacuum components
 │   │   │   ├── DustVacuum.tsx  # Main container
-│   │   │   ├── TokenList.tsx   # Display dust tokens
-│   │   │   └── VacuumButton.tsx# Action button
-│   │   ├── ui/                 # Reusable UI components
-│   │   └── layout/             # Header, Footer
+│   │   │   ├── TokenCard.tsx   # Display dust tokens
+│   │   │   ├── VacuumButton.tsx# Action button
+│   │   │   ├── DustDAOPool.tsx # Pool mode UI
+│   │   │   ├── AdminPanel.tsx  # Admin controls
+│   │   │   └── ...             # Other dust components
+│   │   ├── effects/            # Animation components
+│   │   └── layout/             # Header, Footer, Features
 │   ├── hooks/
 │   │   ├── useDustVacuum.ts    # Main vacuum logic + PTB
+│   │   ├── useDustDAO.ts       # Pool mode logic
 │   │   └── useTokenBalances.ts # Fetch wallet balances
 │   ├── lib/
 │   │   ├── constants.ts        # Contract addresses, config
+│   │   ├── tokens.ts           # Token definitions
 │   │   └── utils.ts            # Helper functions
 │   └── types/
-│       └── index.ts            # TypeScript types
+│       ├── index.ts            # TypeScript types
+│       └── dustdao.ts          # DustDAO types
 ├── contracts/
 │   └── dust_vacuum/
 │       ├── sources/
 │       │   └── dust_vacuum.move # Smart contract (Move 2024)
+│       ├── tests/              # Move tests
 │       └── Move.toml           # Move config (edition = "2024")
 ├── public/                     # Static assets
 ├── AI_DISCLOSURE.md            # AI assistance disclosure

@@ -10,11 +10,12 @@ import {
   ChevronUp,
   Loader2,
   Award,
-  ExternalLink,
+  Clock,
+  CheckCircle2,
 } from "lucide-react";
 import { DepositReceiptInfo, MembershipInfo, VaultInfo } from "@/types/dustdao";
 import { formatUSD, cn } from "@/lib/utils";
-import { SUI_DECIMALS, SUI_EXPLORER_TX_URL } from "@/lib/constants";
+import { SUI_DECIMALS } from "@/lib/constants";
 
 interface RewardsPanelProps {
   vaultInfo: VaultInfo | null;
@@ -39,17 +40,10 @@ export function RewardsPanel({
 }: RewardsPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
 
-  const suiRewardsFormatted = vaultInfo ? Number(vaultInfo.suiRewards) / Math.pow(10, SUI_DECIMALS) : 0;
-
-  // Filter receipts for current round
-  const currentRoundReceipts = receipts.filter(r => r.round === vaultInfo?.round);
-
-  // Calculate estimated reward for each receipt
-  const getEstimatedReward = (receipt: DepositReceiptInfo) => {
-    if (!vaultInfo || vaultInfo.totalShares === BigInt(0)) return 0;
-    const sharePercent = Number(receipt.shares) / Number(vaultInfo.totalShares);
-    return suiRewardsFormatted * sharePercent;
-  };
+  // Filter receipts
+  const currentRound = vaultInfo?.round ?? 1;
+  const claimableReceipts = receipts.filter(r => r.round < currentRound);
+  const pendingReceipts = receipts.filter(r => r.round === currentRound);
 
   return (
     <motion.div
@@ -135,97 +129,96 @@ export function RewardsPanel({
               </div>
             )}
 
-            {/* Claimable Receipts */}
-            {currentRoundReceipts.length > 0 ? (
-              <div className="space-y-3">
-                <p className="text-sm font-medium text-sui-muted">Claimable Rewards (Round #{vaultInfo?.round})</p>
-                
-                {currentRoundReceipts.map((receipt) => {
-                  const estimatedReward = getEstimatedReward(receipt);
-                  const sharesUSD = Number(receipt.shares) / 1e6;
-                  
-                  return (
-                    <div 
-                      key={receipt.objectId}
-                      className="p-4 bg-sui-darker rounded-xl"
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <p className="font-medium">Deposit Receipt</p>
-                          <p className="text-sm text-sui-muted">
-                            Value: {formatUSD(sharesUSD)}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-sm text-sui-muted">Est. Reward</p>
-                          <p className="font-semibold text-sui-success">
-                            ~{estimatedReward.toFixed(4)} SUI
-                          </p>
-                        </div>
+            {/* Claimable Rewards */}
+            <div className="space-y-3 mb-6">
+              <h4 className="text-sm font-medium text-sui-muted flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-sui-success" />
+                Claimable Rewards
+              </h4>
+              
+              {claimableReceipts.length > 0 ? (
+                claimableReceipts.map((receipt) => (
+                  <div key={receipt.objectId} className="p-4 bg-sui-darker rounded-xl border border-sui-success/20">
+                    <div className="flex justify-between items-start mb-3">
+                      <div>
+                        <p className="font-medium text-sm text-sui-success">Round #{receipt.round} Finalized</p>
+                        <p className="text-xs text-sui-muted">Value: {formatUSD(Number(receipt.shares) / 1e6)}</p>
                       </div>
-
-                      {/* Action Buttons */}
-                      {suiRewardsFormatted > 0 ? (
-                        <div className="grid grid-cols-2 gap-2">
-                          <button
-                            onClick={() => onClaim(receipt.objectId)}
-                            disabled={isClaiming || isStaking || !membership}
-                            className={cn(
-                              "py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2",
-                              !isClaiming && !isStaking && membership
-                                ? "bg-sui-success/20 text-sui-success hover:bg-sui-success/30"
-                                : "bg-sui-darker text-sui-muted cursor-not-allowed"
-                            )}
-                          >
-                            {isClaiming ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Wallet className="w-4 h-4" />
-                            )}
-                            <span>Claim SUI</span>
-                          </button>
-
-                          <button
-                            onClick={() => onStake(receipt.objectId)}
-                            disabled={isClaiming || isStaking || !membership}
-                            className={cn(
-                              "py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2",
-                              !isClaiming && !isStaking && membership
-                                ? "bg-sui-blue/20 text-sui-blue hover:bg-sui-blue/30"
-                                : "bg-sui-darker text-sui-muted cursor-not-allowed"
-                            )}
-                          >
-                            {isStaking ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <TrendingUp className="w-4 h-4" />
-                            )}
-                            <span>Auto-Stake</span>
-                          </button>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-sui-muted text-center py-2">
-                          Waiting for batch swap...
-                        </p>
-                      )}
+                      <div className="text-right">
+                        <span className="px-2 py-0.5 bg-sui-success/10 text-sui-success text-[10px] rounded-full font-bold">READY</span>
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="text-center py-6">
-                <Gift className="w-10 h-10 text-sui-muted mx-auto mb-3" />
-                <p className="text-sui-muted">No pending rewards</p>
-                <p className="text-sm text-sui-muted mt-1">
-                  Deposit dust tokens to earn rewards
-                </p>
-              </div>
-            )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => onClaim(receipt.objectId)}
+                        disabled={isClaiming || isStaking || !membership}
+                        className={cn(
+                          "py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2",
+                          !isClaiming && !isStaking && membership
+                            ? "bg-sui-success/20 text-sui-success hover:bg-sui-success/30"
+                            : "bg-sui-darker text-sui-muted cursor-not-allowed"
+                        )}
+                      >
+                        {isClaiming ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" />}
+                        <span>Claim SUI</span>
+                      </button>
+                      <button
+                        onClick={() => onStake(receipt.objectId)}
+                        disabled={isClaiming || isStaking || !membership}
+                        className={cn(
+                          "py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2",
+                          !isClaiming && !isStaking && membership
+                            ? "bg-sui-blue/20 text-sui-blue hover:bg-sui-blue/30"
+                            : "bg-sui-darker text-sui-muted cursor-not-allowed"
+                        )}
+                      >
+                        {isStaking ? <Loader2 className="w-4 h-4 animate-spin" /> : <TrendingUp className="w-4 h-4" />}
+                        <span>Stake</span>
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 bg-sui-darker/50 rounded-xl text-center">
+                  <p className="text-xs text-sui-muted">No claimable rewards available</p>
+                </div>
+              )}
+            </div>
+
+            {/* Pending Rewards */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-medium text-sui-muted flex items-center gap-2">
+                <Clock className="w-4 h-4 text-sui-warning" />
+                Active Deposits (Round #{currentRound})
+              </h4>
+              
+              {pendingReceipts.length > 0 ? (
+                pendingReceipts.map((receipt) => (
+                  <div key={receipt.objectId} className="p-4 bg-sui-darker rounded-xl">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <p className="font-medium text-sm">Active Receipt</p>
+                        <p className="text-xs text-sui-muted">Value: {formatUSD(Number(receipt.shares) / 1e6)}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] text-sui-warning font-bold uppercase">Collecting...</p>
+                        <p className="text-[10px] text-sui-muted mt-1">Claimable after batch swap</p>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="p-4 bg-sui-darker/50 rounded-xl text-center">
+                  <p className="text-xs text-sui-muted">No active deposits in this round</p>
+                </div>
+              )}
+            </div>
 
             {/* Info */}
-            <div className="mt-4 p-3 bg-sui-darker rounded-xl">
-              <p className="text-xs text-sui-muted">
-                <span className="text-white font-medium">💡 Tip:</span> Auto-stake your rewards to earn additional yield on your SUI. You can withdraw staked SUI anytime.
+            <div className="mt-6 p-3 bg-sui-darker rounded-xl border border-sui-border/50">
+              <p className="text-xs text-sui-muted leading-relaxed">
+                <span className="text-white font-medium">💡 Info:</span> Your deposits are locked in the smart contract. Rewards become available only after the admin completes the batch swap for the round.
               </p>
             </div>
           </motion.div>

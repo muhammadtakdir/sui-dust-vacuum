@@ -33,7 +33,7 @@ const ADMIN_CAP_ID = DUST_VACUUM_CONTRACT.mainnet.ADMIN_CAP_ID;
  * - View vault info and user shares
  * - Deposit dust tokens to community vault
  * - Claim or stake rewards
- * - Admin functions (batch swap, open/close vault)
+ * - Admin functions (batch swap, open/close vault, set target)
  * - Governance voting
  */
 export function useDustDAO() {
@@ -79,14 +79,16 @@ export function useDustDAO() {
         
         setVaultInfo({
           admin: fields.admin as string,
-          totalShares: BigInt((fields.total_shares as string) || "0"),
-          suiRewards: BigInt((fields.sui_rewards as { fields?: { value?: string } })?.fields?.value || "0"),
+          totalShares: BigInt((fields.current_round_shares as string) || "0"),
+          suiRewards: BigInt(0), // v3: Rewards are now in round history
           stakedSui: BigInt((fields.staked_sui as { fields?: { value?: string } })?.fields?.value || "0"),
           round: parseInt((fields.round as string) || "1"),
           isOpen: fields.is_open as boolean,
           depositorsCount: parseInt((fields.depositors_count as string) || "0"),
           totalLifetimeShares: BigInt((fields.total_lifetime_shares as string) || "0"),
           totalFeesCollected: BigInt((fields.total_fees_collected as string) || "0"),
+          targetUsdValue: BigInt((fields.target_usd_value as string) || "0"),
+          currentUsdValue: BigInt((fields.current_usd_value as string) || "0"),
         });
       }
     } catch (error) {
@@ -97,41 +99,13 @@ export function useDustDAO() {
   }, [client]);
 
   /**
-   * Fetch user's shares in the vault
-   * Note: We get this from the vault's dynamic fields or events
-   * For simplicity, we'll track shares locally after deposits
-   */
-  const fetchUserShares = useCallback(async () => {
-    if (!account?.address || !vaultInfo) return;
-
-    try {
-      // Try to get user shares from vault's Table
-      // Since Tables are not directly readable, we estimate from receipts
-      // In production, you'd use a custom view function or indexer
-      
-      // For now, calculate from receipts
-      const totalReceiptShares = receipts.reduce((sum, r) => sum + r.shares, BigInt(0));
-      const sharesUSD = Number(totalReceiptShares) / 1e6;
-      const percentage = vaultInfo.totalShares > 0 
-        ? (Number(totalReceiptShares) / Number(vaultInfo.totalShares)) * 100 
-        : 0;
-
-      setUserShares({ 
-        shares: BigInt(totalReceiptShares), 
-        sharesUSD, 
-        percentage 
-      });
-    } catch (error) {
-      console.error("[DustDAO] Failed to fetch user shares:", error);
-      setUserShares({ shares: BigInt(0), sharesUSD: 0, percentage: 0 });
-    }
-  }, [account?.address, vaultInfo, receipts]);
-
-  /**
-   * Fetch user's DustDAO membership NFT
+   * Fetch user membership info
    */
   const fetchMembership = useCallback(async () => {
-    if (!account?.address) return;
+    if (!account?.address) {
+      setMembership(null);
+      return;
+    }
 
     try {
       const objects = await client.getOwnedObjects({
@@ -142,22 +116,20 @@ export function useDustDAO() {
         options: { showContent: true },
       });
 
-      if (objects.data.length > 0 && objects.data[0].data?.content?.dataType === "moveObject") {
-        const obj = objects.data[0].data;
-        const content = obj.content;
-        if (content && 'fields' in content) {
-          const fields = content.fields as Record<string, unknown>;
-          
-          setMembership({
-            objectId: obj.objectId,
-            member: fields.member as string,
-            lifetimeShares: BigInt((fields.lifetime_shares as string) || "0"),
-            totalSuiEarned: BigInt((fields.total_sui_earned as string) || "0"),
-            stakedAmount: BigInt((fields.staked_amount as string) || "0"),
-            rewardPreference: parseInt((fields.reward_preference as string) || "0"),
-            joinedAtMs: parseInt((fields.joined_at_ms as string) || "0"),
-          });
-        }
+      if (objects.data.length > 0) {
+        const obj = objects.data[0].data!;
+        const content = obj.content as { dataType: "moveObject"; fields: Record<string, unknown> };
+        const fields = content.fields;
+        
+        setMembership({
+          objectId: obj.objectId,
+          member: fields.member as string,
+          lifetimeShares: BigInt((fields.lifetime_shares as string) || "0"),
+          totalSuiEarned: BigInt((fields.total_sui_earned as string) || "0"),
+          stakedAmount: BigInt((fields.staked_amount as string) || "0"),
+          rewardPreference: parseInt((fields.reward_preference as string) || "0"),
+          joinedAtMs: parseInt((fields.joined_at_ms as string) || "0"),
+        });
       } else {
         setMembership(null);
       }
@@ -170,7 +142,10 @@ export function useDustDAO() {
    * Fetch user's deposit receipts
    */
   const fetchReceipts = useCallback(async () => {
-    if (!account?.address) return;
+    if (!account?.address) {
+      setReceipts([]);
+      return;
+    }
 
     try {
       const objects = await client.getOwnedObjects({
@@ -192,7 +167,6 @@ export function useDustDAO() {
             depositor: fields.depositor as string,
             shares: BigInt((fields.shares as string) || "0"),
             round: parseInt((fields.round as string) || "1"),
-            rewardPreference: parseInt((fields.reward_preference as string) || "0"),
           };
         });
 
@@ -203,35 +177,71 @@ export function useDustDAO() {
   }, [client, account?.address]);
 
   /**
+   * Fetch governance proposals
+   */
+  const fetchProposals = useCallback(async () => {
+    try {
+      // Placeholder for proposal fetching logic
+    } catch (error) {
+      console.error("[DustDAO] Failed to fetch proposals:", error);
+    }
+  }, []);
+
+  /**
+   * Calculate user shares in the current round
+   */
+  const calculateUserShares = useCallback(() => {
+    if (!vaultInfo) return;
+
+    // Calculate shares from active receipts (for current round)
+    const currentRoundReceipts = receipts.filter(r => r.round === vaultInfo.round);
+    const roundShares = currentRoundReceipts.reduce((sum, r) => sum + r.shares, BigInt(0));
+    
+    // USD value (shares / 1e6)
+    const sharesUSD = Number(roundShares) / 1e6;
+    
+    // Percentage
+    const totalShares = vaultInfo.totalShares;
+    const percentage = totalShares > BigInt(0) 
+      ? (Number(roundShares) / Number(totalShares)) * 100 
+      : 0;
+
+    setUserShares({
+      shares: roundShares,
+      sharesUSD,
+      percentage,
+    });
+  }, [vaultInfo, receipts]);
+
+  /**
    * Refresh all data
    */
   const refresh = useCallback(async () => {
-    await fetchVaultInfo();
-    if (account?.address) {
-      await Promise.all([
-        fetchUserShares(),
-        fetchMembership(),
-        fetchReceipts(),
-      ]);
-    }
-  }, [fetchVaultInfo, fetchUserShares, fetchMembership, fetchReceipts, account?.address]);
+    setIsLoading(true);
+    await Promise.all([
+      fetchVaultInfo(),
+      fetchMembership(),
+      fetchReceipts(),
+      fetchProposals(),
+    ]);
+    setIsLoading(false);
+  }, [fetchVaultInfo, fetchMembership, fetchReceipts, fetchProposals]);
 
   // Initial fetch
   useEffect(() => {
     refresh();
   }, [refresh]);
 
+  // Update user shares when receipts or vault info change
+  useEffect(() => {
+    calculateUserShares();
+  }, [calculateUserShares]);
+
   /**
-   * Deposit dust tokens to the vault
-   * 
-   * SECURITY: USD value validation
-   * - Rejects deposits with USD value > MAX_DUST_VALUE_USD ($100)
-   * - Rejects deposits with USD value < MIN_DUST_VALUE_USD ($0.001)
-   * - This prevents manipulation attacks where users claim inflated USD values
+   * Unified Deposit Function
    */
   const depositDust = useCallback(async (
     tokens: TokenBalance[],
-    tokenVaultIds: Record<string, string>, // coinType -> tokenVaultId
   ) => {
     if (!account?.address || tokens.length === 0) return;
 
@@ -239,33 +249,20 @@ export function useDustDAO() {
       setState("depositing");
       setResult(null);
 
-      // SECURITY: Validate total deposit value
       const totalUsdValue = tokens.reduce((sum, t) => sum + t.valueUSD, 0);
       if (totalUsdValue > MAX_DUST_VALUE_USD) {
-        throw new Error(`Total deposit value ($${totalUsdValue.toFixed(2)}) exceeds maximum allowed ($${MAX_DUST_VALUE_USD}). This is a dust vacuum - only small balances are allowed.`);
+        throw new Error(`Total deposit value ($${totalUsdValue.toFixed(2)}) exceeds maximum allowed ($${MAX_DUST_VALUE_USD}).`);
       }
 
       const tx = new Transaction();
       let validTokenCount = 0;
+      const depositedTokens: string[] = [];
 
       for (const token of tokens) {
-        const tokenVaultId = tokenVaultIds[token.coinType];
-        if (!tokenVaultId) {
-          console.warn(`[DustDAO] No token vault for ${token.symbol}`);
+        if (token.valueUSD > MAX_DUST_VALUE_USD || token.valueUSD < MIN_DUST_VALUE_USD) {
           continue;
         }
 
-        // SECURITY: Validate individual token USD value
-        if (token.valueUSD > MAX_DUST_VALUE_USD) {
-          console.warn(`[DustDAO] Skipping ${token.symbol}: USD value ($${token.valueUSD.toFixed(2)}) exceeds maximum`);
-          continue;
-        }
-        if (token.valueUSD < MIN_DUST_VALUE_USD) {
-          console.warn(`[DustDAO] Skipping ${token.symbol}: USD value too low`);
-          continue;
-        }
-
-        // Get all coins of this type
         const coins = await client.getCoins({
           owner: account.address,
           coinType: token.coinType,
@@ -273,7 +270,6 @@ export function useDustDAO() {
 
         if (coins.data.length === 0) continue;
 
-        // Merge coins if multiple
         let coinToDeposit;
         if (coins.data.length === 1) {
           coinToDeposit = tx.object(coins.data[0].coinObjectId);
@@ -285,18 +281,13 @@ export function useDustDAO() {
           coinToDeposit = primary;
         }
 
-        // USD value scaled by 1e6
-        // SECURITY: Cap the value to prevent overflow and manipulation
-        const cappedUsdValue = Math.min(token.valueUSD, MAX_DUST_VALUE_USD);
-        const usdValueScaled = Math.floor(cappedUsdValue * 1e6);
+        const usdValueScaled = Math.floor(token.valueUSD * 1e6);
 
-        // Deposit to vault
         tx.moveCall({
           target: `${PACKAGE_ID}::vacuum::deposit_dust`,
           typeArguments: [token.coinType],
           arguments: [
             tx.object(DUST_VAULT_ID),
-            tx.object(tokenVaultId),
             coinToDeposit,
             tx.pure.u64(usdValueScaled),
             tx.object(CLOCK_OBJECT_ID),
@@ -304,20 +295,12 @@ export function useDustDAO() {
         });
         
         validTokenCount++;
+        depositedTokens.push(token.symbol);
       }
 
       if (validTokenCount === 0) {
-        throw new Error("No valid tokens to deposit. Check token values.");
+        throw new Error("No valid tokens to deposit.");
       }
-
-      // Create receipt at the end
-      tx.moveCall({
-        target: `${PACKAGE_ID}::vacuum::create_receipt`,
-        arguments: [
-          tx.object(DUST_VAULT_ID),
-          tx.pure.u8(0), // reward_preference: 0 = Claim
-        ],
-      });
 
       const txResult = await signAndExecute({
         transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
@@ -330,10 +313,9 @@ export function useDustDAO() {
         success: true,
         txDigest: txResult.digest,
         action: "deposit",
-        message: `Deposited ${tokens.length} token(s) to DustDAO pool`,
+        message: `Deposited ${depositedTokens.join(", ")} to DustDAO pool`,
       });
 
-      // Refresh data
       await refresh();
 
     } catch (error) {
@@ -526,186 +508,96 @@ export function useDustDAO() {
     }
   }, [account?.address, membership, signAndExecute, client]);
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // ADMIN FUNCTIONS
-  // ═══════════════════════════════════════════════════════════════════════════
+  /**
+   * Admin: Set Target USD Value
+   */
+  const setTargetUsdValue = useCallback(async (value: number) => {
+    if (!isAdmin) return;
+
+    try {
+      setState("admin-action");
+      
+      const tx = new Transaction();
+      // Scale by 1e6
+      const scaledValue = BigInt(Math.floor(value * 1e6));
+      
+      tx.moveCall({
+        target: `${PACKAGE_ID}::vacuum::set_target_usd_value`,
+        arguments: [
+          tx.object(ADMIN_CAP_ID),
+          tx.object(DUST_VAULT_ID),
+          tx.pure.u64(scaledValue.toString()),
+        ],
+      });
+
+      const txResult = await signAndExecute({
+        transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
+      });
+
+      await client.waitForTransaction({ digest: txResult.digest });
+
+      setState("success");
+      setResult({
+        success: true,
+        txDigest: txResult.digest,
+        action: "admin",
+        message: `Target value updated to $${value}`,
+      });
+
+      await refresh();
+
+    } catch (error) {
+      console.error("[DustDAO] Set target value failed:", error);
+      setState("error");
+      setResult({
+        success: false,
+        action: "admin",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }, [isAdmin, signAndExecute, client, refresh]);
 
   /**
-   * Open vault for deposits (Admin only)
+   * Admin: Open vault
    */
   const openVault = useCallback(async () => {
     if (!isAdmin) return;
-
     try {
       setState("admin-action");
-      
       const tx = new Transaction();
       tx.moveCall({
         target: `${PACKAGE_ID}::vacuum::open_vault`,
-        arguments: [
-          tx.object(ADMIN_CAP_ID),
-          tx.object(DUST_VAULT_ID),
-        ],
+        arguments: [tx.object(ADMIN_CAP_ID), tx.object(DUST_VAULT_ID)],
       });
-
-      const txResult = await signAndExecute({
-        transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
-      });
-
+      const txResult = await signAndExecute({ transaction: tx as any });
       await client.waitForTransaction({ digest: txResult.digest });
-
       setState("success");
-      setResult({
-        success: true,
-        txDigest: txResult.digest,
-        action: "admin",
-        message: "Vault opened for deposits",
-      });
-
       await refresh();
-
     } catch (error) {
       console.error("[DustDAO] Open vault failed:", error);
       setState("error");
-      setResult({
-        success: false,
-        action: "admin",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
     }
   }, [isAdmin, signAndExecute, client, refresh]);
 
   /**
-   * Close vault for deposits (Admin only)
+   * Admin: Close vault
    */
   const closeVault = useCallback(async () => {
     if (!isAdmin) return;
-
     try {
       setState("admin-action");
-      
       const tx = new Transaction();
       tx.moveCall({
         target: `${PACKAGE_ID}::vacuum::close_vault`,
-        arguments: [
-          tx.object(ADMIN_CAP_ID),
-          tx.object(DUST_VAULT_ID),
-        ],
+        arguments: [tx.object(ADMIN_CAP_ID), tx.object(DUST_VAULT_ID)],
       });
-
-      const txResult = await signAndExecute({
-        transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
-      });
-
+      const txResult = await signAndExecute({ transaction: tx as any });
       await client.waitForTransaction({ digest: txResult.digest });
-
       setState("success");
-      setResult({
-        success: true,
-        txDigest: txResult.digest,
-        action: "admin",
-        message: "Vault closed for deposits",
-      });
-
       await refresh();
-
     } catch (error) {
       console.error("[DustDAO] Close vault failed:", error);
       setState("error");
-      setResult({
-        success: false,
-        action: "admin",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  }, [isAdmin, signAndExecute, client, refresh]);
-
-  /**
-   * Create token vault (Admin only)
-   */
-  const createTokenVault = useCallback(async (coinType: string) => {
-    if (!isAdmin) return;
-
-    try {
-      setState("admin-action");
-      
-      const tx = new Transaction();
-      tx.moveCall({
-        target: `${PACKAGE_ID}::vacuum::create_token_vault`,
-        typeArguments: [coinType],
-        arguments: [
-          tx.object(ADMIN_CAP_ID),
-          tx.object(DUST_VAULT_ID),
-        ],
-      });
-
-      const txResult = await signAndExecute({
-        transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
-      });
-
-      await client.waitForTransaction({ digest: txResult.digest });
-
-      setState("success");
-      setResult({
-        success: true,
-        txDigest: txResult.digest,
-        action: "admin",
-        message: `Token vault created for ${coinType}`,
-      });
-
-    } catch (error) {
-      console.error("[DustDAO] Create token vault failed:", error);
-      setState("error");
-      setResult({
-        success: false,
-        action: "admin",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
-    }
-  }, [isAdmin, signAndExecute, client]);
-
-  /**
-   * Start new round (Admin only)
-   */
-  const newRound = useCallback(async () => {
-    if (!isAdmin) return;
-
-    try {
-      setState("admin-action");
-      
-      const tx = new Transaction();
-      tx.moveCall({
-        target: `${PACKAGE_ID}::vacuum::new_round`,
-        arguments: [
-          tx.object(ADMIN_CAP_ID),
-          tx.object(DUST_VAULT_ID),
-        ],
-      });
-
-      const txResult = await signAndExecute({
-        transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],
-      });
-
-      await client.waitForTransaction({ digest: txResult.digest });
-
-      setState("success");
-      setResult({
-        success: true,
-        txDigest: txResult.digest,
-        action: "admin",
-        message: "New round started",
-      });
-
-      await refresh();
-
-    } catch (error) {
-      console.error("[DustDAO] New round failed:", error);
-      setState("error");
-      setResult({
-        success: false,
-        action: "admin",
-        error: error instanceof Error ? error.message : "Unknown error",
-      });
     }
   }, [isAdmin, signAndExecute, client, refresh]);
 
@@ -718,33 +610,23 @@ export function useDustDAO() {
   }, []);
 
   return {
-    // State
     state,
     result,
     isLoading,
     isAdmin,
-
-    // Data
     vaultInfo,
     userShares,
     membership,
     receipts,
     proposals,
-
-    // User actions
     depositDust,
     claimRewards,
     stakeRewards,
     createMembership,
     voteOnProposal,
-
-    // Admin actions
     openVault,
     closeVault,
-    createTokenVault,
-    newRound,
-
-    // Utils
+    setTargetUsdValue,
     refresh,
     reset,
   };

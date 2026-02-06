@@ -10,6 +10,8 @@ export interface VaultInfo {
   depositorsCount: number;
   totalLifetimeShares: bigint;
   totalFeesCollected: bigint;
+  targetUsdValue: bigint;
+  currentUsdValue: bigint;
 }
 
 export interface UserShares {
@@ -33,7 +35,6 @@ export interface DepositReceiptInfo {
   depositor: string;
   shares: bigint;
   round: number;
-  rewardPreference: number;
 }
 
 export interface ProposalInfo {

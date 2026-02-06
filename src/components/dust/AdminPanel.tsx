@@ -6,16 +6,15 @@ import {
   Shield, 
   Lock, 
   Unlock, 
-  RefreshCw,
   ChevronDown,
   ChevronUp,
   Loader2,
   AlertTriangle,
-  Plus,
   Play,
+  Target,
 } from "lucide-react";
 import { VaultInfo } from "@/types/dustdao";
-import { formatUSD, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { SUI_DECIMALS, ADMIN_FEE_BPS } from "@/lib/constants";
 
 interface AdminPanelProps {
@@ -24,8 +23,7 @@ interface AdminPanelProps {
   isLoading: boolean;
   onOpenVault: () => void;
   onCloseVault: () => void;
-  onNewRound: () => void;
-  onCreateTokenVault: (coinType: string) => void;
+  onSetTarget: (value: number) => void;
 }
 
 export function AdminPanel({
@@ -34,17 +32,28 @@ export function AdminPanel({
   isLoading,
   onOpenVault,
   onCloseVault,
-  onNewRound,
-  onCreateTokenVault,
+  onSetTarget,
 }: AdminPanelProps) {
   const [isExpanded, setIsExpanded] = useState(true);
-  const [newTokenType, setNewTokenType] = useState("");
+  const [targetInput, setTargetInput] = useState("");
 
   if (!isAdmin) return null;
 
   const totalFeesFormatted = vaultInfo 
     ? Number(vaultInfo.totalFeesCollected) / Math.pow(10, SUI_DECIMALS)
     : 0;
+    
+  const currentTarget = vaultInfo?.targetUsdValue 
+    ? Number(vaultInfo.targetUsdValue) / 1e6 
+    : 0;
+
+  const handleSetTarget = () => {
+    const val = parseFloat(targetInput);
+    if (!isNaN(val) && val > 0) {
+      onSetTarget(val);
+      setTargetInput("");
+    }
+  };
 
   return (
     <motion.div
@@ -103,6 +112,33 @@ export function AdminPanel({
                 </p>
               </div>
             </div>
+            
+            {/* Target Setting */}
+            <div className="space-y-3 mb-6">
+              <p className="text-sm font-medium text-sui-muted">Campaign Settings</p>
+              <div className="p-3 bg-sui-darker rounded-xl">
+                 <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm text-sui-muted">Current Target</span>
+                    <span className="font-bold text-sui-blue">${currentTarget.toFixed(2)}</span>
+                 </div>
+                 <div className="flex gap-2">
+                    <input 
+                      type="number" 
+                      placeholder="Set new target (USD)"
+                      value={targetInput}
+                      onChange={(e) => setTargetInput(e.target.value)}
+                      className="flex-1 bg-black/20 border border-sui-border rounded-lg px-3 py-2 text-sm focus:border-sui-blue outline-none"
+                    />
+                    <button
+                      onClick={handleSetTarget}
+                      disabled={isLoading || !targetInput}
+                      className="bg-sui-blue/20 text-sui-blue hover:bg-sui-blue/30 px-3 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      Set
+                    </button>
+                 </div>
+              </div>
+            </div>
 
             {/* Vault Controls */}
             <div className="space-y-3 mb-6">
@@ -147,62 +183,6 @@ export function AdminPanel({
                   <span>Close Vault</span>
                 </button>
               </div>
-
-              {/* New Round */}
-              <button
-                onClick={onNewRound}
-                disabled={isLoading || vaultInfo?.isOpen}
-                className={cn(
-                  "w-full py-3 px-4 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all",
-                  !vaultInfo?.isOpen && !isLoading
-                    ? "bg-sui-blue/20 text-sui-blue hover:bg-sui-blue/30"
-                    : "bg-sui-darker text-sui-muted cursor-not-allowed"
-                )}
-              >
-                {isLoading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4" />
-                )}
-                <span>Start New Round</span>
-              </button>
-            </div>
-
-            {/* Create Token Vault */}
-            <div className="space-y-3">
-              <p className="text-sm font-medium text-sui-muted">Create Token Vault</p>
-              
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newTokenType}
-                  onChange={(e) => setNewTokenType(e.target.value)}
-                  placeholder="0x...::coin::COIN"
-                  className="flex-1 px-4 py-2 bg-sui-darker border border-sui-border rounded-xl text-sm focus:outline-none focus:border-sui-blue"
-                />
-                <button
-                  onClick={() => {
-                    if (newTokenType) {
-                      onCreateTokenVault(newTokenType);
-                      setNewTokenType("");
-                    }
-                  }}
-                  disabled={isLoading || !newTokenType}
-                  className={cn(
-                    "px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-all",
-                    newTokenType && !isLoading
-                      ? "bg-sui-gradient hover:opacity-90"
-                      : "bg-sui-darker text-sui-muted cursor-not-allowed"
-                  )}
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Create</span>
-                </button>
-              </div>
-              
-              <p className="text-xs text-sui-muted">
-                Create a new token vault before users can deposit that token type.
-              </p>
             </div>
 
             {/* Batch Swap Info */}
@@ -212,11 +192,11 @@ export function AdminPanel({
                 Batch Swap Workflow
               </h4>
               <ol className="text-sm text-sui-muted space-y-1 list-decimal list-inside">
+                <li>Set Target USD Value (e.g. $100)</li>
+                <li>Wait for users to fill the vault</li>
                 <li>Close vault (stops new deposits)</li>
-                <li>Withdraw tokens from each TokenVault</li>
-                <li>Swap tokens to SUI via Cetus (in PTB)</li>
-                <li>Call deposit_sui_rewards_with_fee (auto 2% fee)</li>
-                <li>Start new round</li>
+                <li>Execute Batch Swap (via CLI/Script)</li>
+                <li>Call deposit_sui_rewards (auto 2% fee + new round)</li>
               </ol>
               <p className="text-xs text-sui-muted mt-3">
                 Note: Batch swap requires custom PTB construction. Use CLI or dedicated script.

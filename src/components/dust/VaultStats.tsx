@@ -7,7 +7,6 @@ import {
   Users, 
   Lock, 
   Unlock,
-  Clock,
   DollarSign,
 } from "lucide-react";
 import { VaultInfo, UserShares } from "@/types/dustdao";
@@ -44,7 +43,10 @@ export function VaultStats({ vaultInfo, userShares, isLoading }: VaultStatsProps
 
   const suiRewardsFormatted = Number(vaultInfo.suiRewards) / Math.pow(10, SUI_DECIMALS);
   const stakedSuiFormatted = Number(vaultInfo.stakedSui) / Math.pow(10, SUI_DECIMALS);
-  const totalPoolValue = Number(vaultInfo.totalShares) / 1e6; // Shares are scaled by 1e6
+  
+  const currentUsd = vaultInfo.currentUsdValue ? Number(vaultInfo.currentUsdValue) / 1e6 : 0;
+  const targetUsd = vaultInfo.targetUsdValue ? Number(vaultInfo.targetUsdValue) / 1e6 : 0;
+  const progressPercent = targetUsd > 0 ? Math.min((currentUsd / targetUsd) * 100, 100) : 0;
 
   return (
     <div className="space-y-4">
@@ -85,9 +87,28 @@ export function VaultStats({ vaultInfo, userShares, isLoading }: VaultStatsProps
             <span>Pool Value</span>
           </div>
           <p className="font-bold text-lg text-sui-warning">
-            {formatUSD(totalPoolValue)}
+            {formatUSD(currentUsd)}
           </p>
-          <p className="text-xs text-sui-muted mt-1">{vaultInfo.depositorsCount} depositors</p>
+          
+          {targetUsd > 0 ? (
+            <div className="mt-2">
+               <div className="flex justify-between text-xs mb-1">
+                 <span className="text-sui-muted">Progress</span>
+                 <span className="text-sui-blue">{progressPercent.toFixed(0)}%</span>
+               </div>
+               <div className="h-1.5 bg-sui-darker rounded-full overflow-hidden">
+                 <motion.div 
+                   className="h-full bg-sui-blue"
+                   initial={{ width: 0 }}
+                   animate={{ width: `${progressPercent}%` }}
+                   transition={{ duration: 1, ease: "easeOut" }}
+                 />
+               </div>
+               <p className="text-[10px] text-sui-muted mt-1 text-right">Target: ${targetUsd}</p>
+            </div>
+          ) : (
+             <p className="text-xs text-sui-muted mt-1">{vaultInfo.depositorsCount} depositors</p>
+          )}
         </motion.div>
 
         {/* SUI Rewards Pool */}
