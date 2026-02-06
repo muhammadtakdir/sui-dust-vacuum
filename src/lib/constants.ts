@@ -13,12 +13,15 @@ export const DUST_VACUUM_CONTRACT = {
     ADMIN_CAP_ID: "",
   },
   mainnet: {
-    // v2: Security Update - Feb 5, 2026
-    // TX: FvZF4YnoQ6TxnpkxJfZUxdyWkwpkoF3f71x4s4rWR2g3
-    // Previous v1: 0x55422768ae1283fe6373602f11b4f21aa55ab57e2835182831e550c397e6fb60
-    PACKAGE_ID: "0xcbcb622f6a47404be4c28d75dc47fdc0abfd2e8a730eb104495a404e5b2c56e4",
-    DUST_VAULT_ID: "0xf0c002e13c121a72b12d39d3e6d1a99c10792ee5c3d539bb1c6b28c778beb720",
-    ADMIN_CAP_ID: "0x5e270e3af10a6085119ea5f5b2e479dfcbd4a451abba02f3aa1463b81394a8a3",
+    // v3: Architecture Upgrade - Feb 6, 2026
+    // - Refactored to use Bag for unified storage (removed TokenVaults)
+    // - Implemented Round History & Deposit Receipts for async claiming
+    // - Removed admin wallet dependency
+    // TX: DTibjxAB3pGEG1rSvjnEjgwwEHm3dzKF7TK6ATXWsykb
+    // Previous v2: 0xcbcb622f6a47404be4c28d75dc47fdc0abfd2e8a730eb104495a404e5b2c56e4
+    PACKAGE_ID: "0xc66313cc4815b4fc6ecd2bdf4ccbf3c0277da40b2cb2562c6ab996b91b25c9c5",
+    DUST_VAULT_ID: "0xb8164ae8b51ac2d79d94fd6f653815db6d1543c4fc0d534133043a907e8c40f1",
+    ADMIN_CAP_ID: "0x4de73e07b3f08b32d52403e06e6029ff50b3e727811fc548891d9dfc70ddf1e2",
   },
 };
 
