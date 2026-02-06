@@ -17,7 +17,7 @@ module dust_vacuum::vacuum_tests {
     }
 
     #[test]
-    fun test_deposit_dust() {
+    fun test_deposit_dust_creates_receipt() {
         let mut scenario = setup();
         let admin = ts::ctx(&mut scenario).sender();
 
@@ -54,7 +54,6 @@ module dust_vacuum::vacuum_tests {
 
             // Verify logic
             assert!(vacuum::vault_total_shares(&vault) == 1_000_000, 0);
-            assert!(vacuum::user_shares(&vault, USER) == 1_000_000, 1);
             
             // Verify bag storage (new architecture)
             assert!(vacuum::vault_token_balance<SUI>(&vault) == 1_000_000_000, 2);
@@ -63,11 +62,20 @@ module dust_vacuum::vacuum_tests {
             ts::return_shared(clock);
         };
 
+        // 4. Verify Receipt exists for USER
+        ts::next_tx(&mut scenario, USER);
+        {
+            let receipt = ts::take_from_sender<vacuum::DepositReceipt>(&scenario);
+            assert!(vacuum::receipt_shares(&receipt) == 1_000_000, 3);
+            assert!(vacuum::receipt_round(&receipt) == 1, 4);
+            ts::return_to_sender(&scenario, receipt);
+        };
+
         ts::end(scenario);
     }
 
     #[test]
-    fun test_withdraw_for_swap() {
+    fun test_claim_rewards_flow() {
         let mut scenario = setup();
         let admin = ts::ctx(&mut scenario).sender();
 
@@ -84,58 +92,30 @@ module dust_vacuum::vacuum_tests {
         {
             let mut vault = ts::take_shared<vacuum::DustVault>(&scenario);
             let clock = ts::take_shared<Clock>(&scenario);
-            let dust = coin::mint_for_testing<SUI>(500, scenario.ctx());
+            let dust = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
             
-            vacuum::deposit_dust<SUI>(&mut vault, dust, 500, &clock, scenario.ctx());
+            // Deposit: 1 share
+            vacuum::deposit_dust<SUI>(&mut vault, dust, 1, &clock, scenario.ctx());
             
+            // Create membership for claiming later
+            let membership = vacuum::create_membership(&vault, &clock, scenario.ctx());
+            transfer::public_transfer(membership, USER);
+
             ts::return_shared(vault);
             ts::return_shared(clock);
         };
 
-        // 3. Admin withdraws for swap
-        ts::next_tx(&mut scenario, admin);
-        {
-            let mut vault = ts::take_shared<vacuum::DustVault>(&scenario);
-            let admin_cap = ts::take_from_sender<vacuum::AdminCap>(&scenario);
-            
-            // Admin withdraws SUI from the bag to swap it
-            let coin_to_swap = vacuum::withdraw_for_swap<SUI>(&admin_cap, &mut vault, scenario.ctx());
-            
-            assert!(coin::value(&coin_to_swap) == 500, 0);
-            assert!(vacuum::vault_token_balance<SUI>(&vault) == 0, 1);
-
-            transfer::public_transfer(coin_to_swap, admin);
-            ts::return_shared(vault);
-            ts::return_to_sender(&scenario, admin_cap);
-        };
-
-        ts::end(scenario);
-    }
-
-    #[test]
-    fun test_admin_fee_distribution() {
-        let mut scenario = setup();
-        let admin = ts::ctx(&mut scenario).sender();
-
-        // 1. Init
-        ts::next_tx(&mut scenario, admin);
-        {
-            vacuum::init_for_testing(scenario.ctx());
-            let clock = clock::create_for_testing(scenario.ctx());
-            clock::share_for_testing(clock);
-        };
-
-        // 2. Deposit SUI rewards (Simulate post-swap)
+        // 3. Admin Finalizes Round (Deposits SUI Rewards)
         ts::next_tx(&mut scenario, admin);
         {
             let mut vault = ts::take_shared<vacuum::DustVault>(&scenario);
             let admin_cap = ts::take_from_sender<vacuum::AdminCap>(&scenario);
             let clock = ts::take_shared<Clock>(&scenario);
             
-            // Simulate 100 SUI received from swap
+            // 100 SUI reward
             let reward_coin = coin::mint_for_testing<SUI>(100_000, scenario.ctx());
             
-            // Function returns the FEE coin for admin
+            // This finalizes Round 1
             let fee_coin = vacuum::deposit_sui_rewards_with_fee(
                 &admin_cap, 
                 &mut vault, 
@@ -144,16 +124,44 @@ module dust_vacuum::vacuum_tests {
                 scenario.ctx()
             );
 
-            // Check Fee (2% of 100,000 = 2,000)
-            assert!(coin::value(&fee_coin) == 2000, 0);
-            
-            // Check User Rewards (98% = 98,000)
-            assert!(vacuum::vault_sui_rewards(&vault) == 98000, 1);
-
             transfer::public_transfer(fee_coin, admin);
+            
+            // Vault should be in Round 2 now
+            assert!(vacuum::vault_round(&vault) == 2, 0);
+
             ts::return_shared(vault);
             ts::return_shared(clock);
             ts::return_to_sender(&scenario, admin_cap);
+        };
+
+        // 4. User Claims Rewards
+        ts::next_tx(&mut scenario, USER);
+        {
+            let mut vault = ts::take_shared<vacuum::DustVault>(&scenario);
+            let receipt = ts::take_from_sender<vacuum::DepositReceipt>(&scenario);
+            let mut membership = ts::take_from_sender<vacuum::DustDAOMembership>(&scenario);
+            let clock = ts::take_shared<Clock>(&scenario);
+
+            // Verify receipt is for Round 1
+            assert!(vacuum::receipt_round(&receipt) == 1, 1);
+
+            // Claim
+            let reward = vacuum::claim_rewards(
+                &mut vault,
+                receipt,
+                &mut membership,
+                &clock,
+                scenario.ctx()
+            );
+
+            // Expect: 100_000 * 0.98 = 98,000 (after 2% fee)
+            // Share was 100% (1/1)
+            assert!(coin::value(&reward) == 98000, 2);
+
+            transfer::public_transfer(reward, USER);
+            ts::return_shared(vault);
+            ts::return_shared(clock);
+            ts::return_to_sender(&scenario, membership);
         };
 
         ts::end(scenario);

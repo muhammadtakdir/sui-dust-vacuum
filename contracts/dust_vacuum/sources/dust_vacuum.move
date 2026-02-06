@@ -30,8 +30,11 @@ module dust_vacuum::vacuum {
     use sui::table::{Self, Table};
     use sui::bag::{Self, Bag};
     use sui::vec_set::{Self, VecSet};
+    use sui::object::{Self, UID};
     use std::type_name;
     use std::ascii::String;
+    use sui::transfer;
+    use sui::tx_context::{Self, TxContext};
 
     // ═══════════════════════════════════════════════════════════════════════════
     // ERRORS
@@ -45,6 +48,7 @@ module dust_vacuum::vacuum {
     const EProposalNotActive: u64 = 6;
     const ENoVotingPower: u64 = 7;
     const EValueTooHigh: u64 = 8; // SECURITY: Prevent USD manipulation
+    const ERoundNotFinalized: u64 = 9;
 
     // ═══════════════════════════════════════════════════════════════════════════
     // CONSTANTS
@@ -75,28 +79,32 @@ module dust_vacuum::vacuum {
         id: UID,
     }
 
+    /// Stores rewards and share info for a finalized round
+    public struct RoundRewards has store {
+        total_shares: u64,
+        rewards: Balance<SUI>,
+    }
+
     /// Main DustDAO Vault - ONE vault for ALL token types
     public struct DustVault has key {
         id: UID,
         /// Admin address (for fee distribution)
         admin: address,
-        /// Track user shares (USD value scaled by 1e6): address -> shares
-        user_shares: Table<address, u64>,
         /// Dynamic bag to store various token balances: String (Type) -> Balance<T>
         tokens: Bag,
         /// Track which token types are currently in the bag
         token_types: VecSet<String>,
-        /// Total shares in current round
-        total_shares: u64,
+        /// History of finalized rounds: round_id -> RoundRewards
+        history: Table<u64, RoundRewards>,
+        /// Total shares in current (active) round
+        current_round_shares: u64,
         /// Target USD value to trigger distribution (informational/trigger)
         target_usd_value: u64,
         /// Current accumulated USD value in this round
         current_usd_value: u64,
-        /// SUI rewards pool from batch swaps (after fee deduction)
-        sui_rewards: Balance<SUI>,
         /// Staked SUI pool (for auto-stake users)
         staked_sui: Balance<SUI>,
-        /// Round number (increments after each distribution)
+        /// Current Round number (increments after distribution)
         round: u64,
         /// Is vault open for deposits?
         is_open: bool,
@@ -126,17 +134,16 @@ module dust_vacuum::vacuum {
         joined_at_ms: u64,
     }
 
-    /// Receipt for current round deposits
+    /// Receipt for a deposit in a specific round.
+    /// Acts as a "claim ticket" for future rewards.
     public struct DepositReceipt has key, store {
         id: UID,
         /// Depositor
         depositor: address,
-        /// Shares (USD value) for this round
+        /// Shares (USD value)
         shares: u64,
-        /// Round number
+        /// Round number this deposit belongs to
         round: u64,
-        /// Reward preference: 0 = Claim SUI, 1 = Auto-Stake
-        reward_preference: u8,
     }
 
     /// Governance proposal for DAO voting
@@ -256,13 +263,12 @@ module dust_vacuum::vacuum {
         let vault = DustVault {
             id: object::new(ctx),
             admin: admin_address,
-            user_shares: table::new(ctx),
             tokens: bag::new(ctx),
             token_types: vec_set::empty(),
-            total_shares: 0,
+            history: table::new(ctx),
+            current_round_shares: 0,
             target_usd_value: 0,
             current_usd_value: 0,
-            sui_rewards: balance::zero<SUI>(),
             staked_sui: balance::zero<SUI>(),
             round: 1,
             is_open: true,
@@ -313,7 +319,8 @@ module dust_vacuum::vacuum {
         coin::take(balance_ref, amount, ctx)
     }
 
-    /// Deposit SUI rewards after batch swap WITH automatic fee deduction
+    /// Deposit SUI rewards after batch swap WITH automatic fee deduction.
+    /// Finalizes the current round and makes rewards available for claiming.
     public fun deposit_sui_rewards_with_fee(
         _admin: &AdminCap,
         vault: &mut DustVault,
@@ -333,9 +340,13 @@ module dust_vacuum::vacuum {
         // Split fee for admin
         let fee_balance = balance::split(&mut sui_balance, admin_fee);
         
-        // Add remaining to user rewards pool
-        vault.sui_rewards.join(sui_balance);
-        
+        // Store rewards in HISTORY for the current round
+        let round_info = RoundRewards {
+            total_shares: vault.current_round_shares,
+            rewards: sui_balance,
+        };
+        vault.history.add(vault.round, round_info);
+
         // Track fees collected
         vault.total_fees_collected = vault.total_fees_collected + admin_fee;
         
@@ -349,6 +360,13 @@ module dust_vacuum::vacuum {
             timestamp_ms: clock.timestamp_ms(),
         });
         
+        // Prepare for NEXT round
+        vault.round = vault.round + 1;
+        vault.current_round_shares = 0;
+        vault.depositors_count = 0;
+        vault.current_usd_value = 0;
+        vault.is_open = true;
+
         // Return admin fee as coin (will be sent to admin wallet)
         coin::from_balance(fee_balance, ctx)
     }
@@ -369,17 +387,6 @@ module dust_vacuum::vacuum {
             round: vault.round,
             timestamp_ms: clock.timestamp_ms(),
         });
-    }
-
-    /// Start new round
-    public fun new_round(_admin: &AdminCap, vault: &mut DustVault) {
-        vault.round = vault.round + 1;
-        vault.total_shares = 0;
-        vault.depositors_count = 0;
-        vault.current_usd_value = 0; // Reset progress
-        vault.is_open = true;
-        // Note: We do NOT clear tokens or token_types here. 
-        // Any leftover tokens in the bag remain for the next round.
     }
 
     /// Create a governance proposal
@@ -415,9 +422,8 @@ module dust_vacuum::vacuum {
     // USER FUNCTIONS - DEPOSIT
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Deposit dust token to vault
-    /// usd_value scaled by 1e6 (e.g., $1.23 = 1_230_000)
-    /// reward_preference: 0 = Claim SUI, 1 = Auto-Stake
+    /// Deposit dust token to vault.
+    /// ISSUES A DEPOSIT RECEIPT to the user immediately.
     public fun deposit_dust<T>(
         vault: &mut DustVault,
         dust_coin: Coin<T>,
@@ -443,49 +449,32 @@ module dust_vacuum::vacuum {
         let balance_ref = vault.tokens.borrow_mut<String, Balance<T>>(token_type);
         balance_ref.join(dust_coin.into_balance());
 
-        // Track shares (shares = usd_value)
-        let shares = usd_value;
-        if (vault.user_shares.contains(user)) {
-            let existing = vault.user_shares.borrow_mut(user);
-            *existing = *existing + shares;
-        } else {
-            vault.user_shares.add(user, shares);
-            vault.depositors_count = vault.depositors_count + 1;
-        };
+        // Update Round stats
+        vault.current_round_shares = vault.current_round_shares + usd_value;
+        vault.current_usd_value = vault.current_usd_value + usd_value;
+        vault.total_lifetime_shares = vault.total_lifetime_shares + usd_value;
+        vault.depositors_count = vault.depositors_count + 1; // Approximate count (counts deposits, not unique users)
 
-        vault.total_shares = vault.total_shares + shares;
-        vault.current_usd_value = vault.current_usd_value + shares; // Accumulate value
-        vault.total_lifetime_shares = vault.total_lifetime_shares + shares;
+        // Create Receipt
+        let receipt = DepositReceipt {
+            id: object::new(ctx),
+            depositor: user,
+            shares: usd_value,
+            round: vault.round,
+        };
+        
+        // Transfer receipt to user
+        transfer::public_transfer(receipt, user);
 
         event::emit(DustDepositedEvent {
             user,
             token_type,
             amount,
             usd_value,
-            shares,
+            shares: usd_value,
             round: vault.round,
             timestamp_ms: clock.timestamp_ms(),
         });
-    }
-
-    /// Create deposit receipt (call after all deposits done)
-    public fun create_receipt(
-        vault: &mut DustVault,
-        reward_preference: u8,
-        ctx: &mut TxContext,
-    ): DepositReceipt {
-        let user = ctx.sender();
-        assert!(vault.user_shares.contains(user), ENoShares);
-
-        let shares = *vault.user_shares.borrow(user);
-
-        DepositReceipt {
-            id: object::new(ctx),
-            depositor: user,
-            shares,
-            round: vault.round,
-            reward_preference,
-        }
     }
 
     /// Create or update DustDAO membership
@@ -495,22 +484,19 @@ module dust_vacuum::vacuum {
         ctx: &mut TxContext,
     ): DustDAOMembership {
         let user = ctx.sender();
-        let shares = if (vault.user_shares.contains(user)) {
-            *vault.user_shares.borrow(user)
-        } else {
-            0
-        };
-
+        // NOTE: Initial shares are 0 in new model (tracked via receipts)
+        // Unless we scan history, which is expensive.
+        
         event::emit(MembershipCreatedEvent {
             user,
-            initial_shares: shares,
+            initial_shares: 0,
             timestamp_ms: clock.timestamp_ms(),
         });
 
         DustDAOMembership {
             id: object::new(ctx),
             member: user,
-            lifetime_shares: shares,
+            lifetime_shares: 0, 
             total_sui_earned: 0,
             staked_amount: 0,
             reward_preference: REWARD_CLAIM,
@@ -522,7 +508,8 @@ module dust_vacuum::vacuum {
     // USER FUNCTIONS - CLAIM / STAKE
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Claim SUI rewards (Option A)
+    /// Claim SUI rewards (Option A: Withdraw to Wallet)
+    /// Requires a DepositReceipt from a finalized round.
     public fun claim_rewards(
         vault: &mut DustVault,
         receipt: DepositReceipt,
@@ -530,74 +517,71 @@ module dust_vacuum::vacuum {
         clock: &Clock,
         ctx: &mut TxContext,
     ): Coin<SUI> {
-        let DepositReceipt { id, depositor, shares, round, reward_preference: _ } = receipt;
+        let DepositReceipt { id, depositor: _, shares, round } = receipt;
         object::delete(id);
 
-        assert!(round == vault.round, EWrongRound);
-        assert!(vault.sui_rewards.value() > 0, EVaultEmpty);
-        assert!(shares > 0, ENoShares);
+        assert!(vault.history.contains(round), ERoundNotFinalized);
+        let round_info = vault.history.borrow_mut(round);
+        
+        // Calculate share
+        let total_rewards = round_info.rewards.value();
+        assert!(total_rewards > 0, EVaultEmpty);
+        
+        let user_reward_amount = ((shares as u128) * (total_rewards as u128) / (round_info.total_shares as u128)) as u64;
 
-        // Calculate share: (user_shares / total_shares) * total_sui
-        let total_sui = vault.sui_rewards.value();
-        let user_sui = ((shares as u128) * (total_sui as u128) / (vault.total_shares as u128)) as u64;
+        // Take from round specific balance
+        let reward_balance = balance::split(&mut round_info.rewards, user_reward_amount);
 
-        // Update membership
+        // Update membership stats
         membership.lifetime_shares = membership.lifetime_shares + shares;
-        membership.total_sui_earned = membership.total_sui_earned + user_sui;
-
-        // Remove from user_shares
-        if (vault.user_shares.contains(depositor)) {
-            let _ = vault.user_shares.remove(depositor);
-        };
+        membership.total_sui_earned = membership.total_sui_earned + user_reward_amount;
 
         event::emit(RewardsClaimedEvent {
-            user: depositor,
+            user: ctx.sender(),
             shares,
-            sui_amount: user_sui,
+            sui_amount: user_reward_amount,
             round,
             timestamp_ms: clock.timestamp_ms(),
         });
 
-        coin::take(&mut vault.sui_rewards, user_sui, ctx)
+        coin::from_balance(reward_balance, ctx)
     }
 
-    /// Auto-stake rewards (Option B)
-    /// SUI goes to staked_sui pool, user's staked_amount increases
+    /// Stake SUI rewards (Option B: Auto-Stake)
+    /// Requires a DepositReceipt from a finalized round.
     public fun stake_rewards(
         vault: &mut DustVault,
         receipt: DepositReceipt,
         membership: &mut DustDAOMembership,
         clock: &Clock,
     ) {
-        let DepositReceipt { id, depositor, shares, round, reward_preference: _ } = receipt;
+        let DepositReceipt { id, depositor: _, shares, round } = receipt;
         object::delete(id);
 
-        assert!(round == vault.round, EWrongRound);
-        assert!(vault.sui_rewards.value() > 0, EVaultEmpty);
-        assert!(shares > 0, ENoShares);
+        assert!(vault.history.contains(round), ERoundNotFinalized);
+        let round_info = vault.history.borrow_mut(round);
 
         // Calculate share
-        let total_sui = vault.sui_rewards.value();
-        let user_sui = ((shares as u128) * (total_sui as u128) / (vault.total_shares as u128)) as u64;
+        let total_rewards = round_info.rewards.value();
+        assert!(total_rewards > 0, EVaultEmpty);
 
-        // Move from rewards to staked pool
-        let staked_balance = balance::split(&mut vault.sui_rewards, user_sui);
-        vault.staked_sui.join(staked_balance);
+        let user_reward_amount = ((shares as u128) * (total_rewards as u128) / (round_info.total_shares as u128)) as u64;
+
+        // Take from round specific balance
+        let reward_balance = balance::split(&mut round_info.rewards, user_reward_amount);
+        
+        // Move to staked pool
+        vault.staked_sui.join(reward_balance);
 
         // Update membership
         membership.lifetime_shares = membership.lifetime_shares + shares;
-        membership.staked_amount = membership.staked_amount + user_sui;
+        membership.staked_amount = membership.staked_amount + user_reward_amount;
         membership.reward_preference = REWARD_STAKE;
 
-        // Remove from user_shares
-        if (vault.user_shares.contains(depositor)) {
-            let _ = vault.user_shares.remove(depositor);
-        };
-
         event::emit(RewardsStakedEvent {
-            user: depositor,
+            user: membership.member,
             shares,
-            sui_amount: user_sui,
+            sui_amount: user_reward_amount,
             round,
             timestamp_ms: clock.timestamp_ms(),
         });
@@ -679,10 +663,9 @@ module dust_vacuum::vacuum {
     // ═══════════════════════════════════════════════════════════════════════════
 
     public fun vault_admin(vault: &DustVault): address { vault.admin }
-    public fun vault_total_shares(vault: &DustVault): u64 { vault.total_shares }
+    public fun vault_total_shares(vault: &DustVault): u64 { vault.current_round_shares }
     public fun vault_target_value(vault: &DustVault): u64 { vault.target_usd_value }
     public fun vault_current_value(vault: &DustVault): u64 { vault.current_usd_value }
-    public fun vault_sui_rewards(vault: &DustVault): u64 { vault.sui_rewards.value() }
     public fun vault_staked_sui(vault: &DustVault): u64 { vault.staked_sui.value() }
     public fun vault_round(vault: &DustVault): u64 { vault.round }
     public fun vault_is_open(vault: &DustVault): bool { vault.is_open }
@@ -690,10 +673,6 @@ module dust_vacuum::vacuum {
     public fun vault_lifetime_shares(vault: &DustVault): u64 { vault.total_lifetime_shares }
     public fun vault_total_fees(vault: &DustVault): u64 { vault.total_fees_collected }
     public fun admin_fee_bps(): u64 { ADMIN_FEE_BPS }
-
-    public fun user_shares(vault: &DustVault, user: address): u64 {
-        if (vault.user_shares.contains(user)) { *vault.user_shares.borrow(user) } else { 0 }
-    }
 
     public fun vault_token_balance<T>(vault: &DustVault): u64 {
         let token_type = type_name::into_string(type_name::with_original_ids<T>());
@@ -719,11 +698,10 @@ module dust_vacuum::vacuum {
 
     public fun proposal_votes_for(p: &Proposal): u64 { p.votes_for }
     public fun proposal_votes_against(p: &Proposal): u64 { p.votes_against }
-        public fun proposal_is_active(p: &Proposal): bool { p.is_active }
-    
-        #[test_only]
-        public fun init_for_testing(ctx: &mut TxContext) {
-            init(ctx);
-        }
+    public fun proposal_is_active(p: &Proposal): bool { p.is_active }
+
+    #[test_only]
+    public fun init_for_testing(ctx: &mut TxContext) {
+        init(ctx);
     }
-    
+}
