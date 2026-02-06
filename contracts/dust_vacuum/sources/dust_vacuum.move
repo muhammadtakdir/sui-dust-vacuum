@@ -28,6 +28,8 @@ module dust_vacuum::vacuum {
     use sui::clock::Clock;
     use sui::sui::SUI;
     use sui::table::{Self, Table};
+    use sui::bag::{Self, Bag};
+    use sui::vec_set::{Self, VecSet};
     use std::type_name;
     use std::ascii::String;
 
@@ -80,8 +82,16 @@ module dust_vacuum::vacuum {
         admin: address,
         /// Track user shares (USD value scaled by 1e6): address -> shares
         user_shares: Table<address, u64>,
+        /// Dynamic bag to store various token balances: String (Type) -> Balance<T>
+        tokens: Bag,
+        /// Track which token types are currently in the bag
+        token_types: VecSet<String>,
         /// Total shares in current round
         total_shares: u64,
+        /// Target USD value to trigger distribution (informational/trigger)
+        target_usd_value: u64,
+        /// Current accumulated USD value in this round
+        current_usd_value: u64,
         /// SUI rewards pool from batch swaps (after fee deduction)
         sui_rewards: Balance<SUI>,
         /// Staked SUI pool (for auto-stake users)
@@ -96,15 +106,6 @@ module dust_vacuum::vacuum {
         total_lifetime_shares: u64,
         /// Total fees collected (for transparency)
         total_fees_collected: u64,
-    }
-
-    /// Token-specific vault to hold one type of dust
-    public struct TokenVault<phantom T> has key {
-        id: UID,
-        /// Balance of this token type
-        balance: Balance<T>,
-        /// Reference to main vault round
-        round: u64,
     }
 
     /// User's membership in DustDAO
@@ -256,7 +257,11 @@ module dust_vacuum::vacuum {
             id: object::new(ctx),
             admin: admin_address,
             user_shares: table::new(ctx),
+            tokens: bag::new(ctx),
+            token_types: vec_set::empty(),
             total_shares: 0,
+            target_usd_value: 0,
+            current_usd_value: 0,
             sui_rewards: balance::zero<SUI>(),
             staked_sui: balance::zero<SUI>(),
             round: 1,
@@ -272,18 +277,13 @@ module dust_vacuum::vacuum {
     // ADMIN FUNCTIONS
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /// Create a token vault for specific token type
-    public fun create_token_vault<T>(
+    /// Set the target USD value for the current round (e.g., $100 USDC equivalent)
+    public fun set_target_usd_value(
         _admin: &AdminCap,
-        main_vault: &DustVault,
-        ctx: &mut TxContext,
+        vault: &mut DustVault,
+        value: u64,
     ) {
-        let token_vault = TokenVault<T> {
-            id: object::new(ctx),
-            balance: balance::zero<T>(),
-            round: main_vault.round,
-        };
-        transfer::share_object(token_vault);
+        vault.target_usd_value = value;
     }
 
     /// Close vault for deposits (before batch swap)
@@ -297,26 +297,23 @@ module dust_vacuum::vacuum {
     }
 
     /// Withdraw tokens for batch swap (used in PTB)
+    /// Admin specifies which token type to withdraw from the bag
     public fun withdraw_for_swap<T>(
         _admin: &AdminCap,
-        token_vault: &mut TokenVault<T>,
+        vault: &mut DustVault,
         ctx: &mut TxContext,
     ): Coin<T> {
-        let amount = token_vault.balance.value();
+        let token_type = type_name::into_string(type_name::with_original_ids<T>());
+        assert!(vault.tokens.contains(token_type), EVaultEmpty);
+
+        let balance_ref = vault.tokens.borrow_mut<String, Balance<T>>(token_type);
+        let amount = balance_ref.value();
         assert!(amount > 0, EVaultEmpty);
-        coin::take(&mut token_vault.balance, amount, ctx)
+        
+        coin::take(balance_ref, amount, ctx)
     }
 
     /// Deposit SUI rewards after batch swap WITH automatic fee deduction
-    /// 
-    /// Flow:
-    /// 1. Admin clicks "Batch Swap All Dust"
-    /// 2. Admin pays gas from wallet
-    /// 3. Contract receives total SUI from swap
-    /// 4. Auto-deduct 2% fee → sent to admin (gas reimbursement + incentive)
-    /// 5. Remaining 98% goes to user rewards pool
-    /// 
-    /// Returns the admin fee coin
     public fun deposit_sui_rewards_with_fee(
         _admin: &AdminCap,
         vault: &mut DustVault,
@@ -379,7 +376,10 @@ module dust_vacuum::vacuum {
         vault.round = vault.round + 1;
         vault.total_shares = 0;
         vault.depositors_count = 0;
+        vault.current_usd_value = 0; // Reset progress
         vault.is_open = true;
+        // Note: We do NOT clear tokens or token_types here. 
+        // Any leftover tokens in the bag remain for the next round.
     }
 
     /// Create a governance proposal
@@ -418,12 +418,8 @@ module dust_vacuum::vacuum {
     /// Deposit dust token to vault
     /// usd_value scaled by 1e6 (e.g., $1.23 = 1_230_000)
     /// reward_preference: 0 = Claim SUI, 1 = Auto-Stake
-    /// 
-    /// SECURITY: usd_value is validated to prevent manipulation
-    /// Max allowed: $100 (100_000_000 scaled)
     public fun deposit_dust<T>(
         vault: &mut DustVault,
-        token_vault: &mut TokenVault<T>,
         dust_coin: Coin<T>,
         usd_value: u64,
         clock: &Clock,
@@ -438,8 +434,14 @@ module dust_vacuum::vacuum {
         let user = ctx.sender();
         let token_type = type_name::into_string(type_name::with_original_ids<T>());
 
-        // Add to token vault
-        token_vault.balance.join(dust_coin.into_balance());
+        // Store token in Bag
+        if (!vault.tokens.contains(token_type)) {
+            vault.tokens.add(token_type, balance::zero<T>());
+            vault.token_types.insert(token_type);
+        };
+        
+        let balance_ref = vault.tokens.borrow_mut<String, Balance<T>>(token_type);
+        balance_ref.join(dust_coin.into_balance());
 
         // Track shares (shares = usd_value)
         let shares = usd_value;
@@ -452,6 +454,7 @@ module dust_vacuum::vacuum {
         };
 
         vault.total_shares = vault.total_shares + shares;
+        vault.current_usd_value = vault.current_usd_value + shares; // Accumulate value
         vault.total_lifetime_shares = vault.total_lifetime_shares + shares;
 
         event::emit(DustDepositedEvent {
@@ -677,6 +680,8 @@ module dust_vacuum::vacuum {
 
     public fun vault_admin(vault: &DustVault): address { vault.admin }
     public fun vault_total_shares(vault: &DustVault): u64 { vault.total_shares }
+    public fun vault_target_value(vault: &DustVault): u64 { vault.target_usd_value }
+    public fun vault_current_value(vault: &DustVault): u64 { vault.current_usd_value }
     public fun vault_sui_rewards(vault: &DustVault): u64 { vault.sui_rewards.value() }
     public fun vault_staked_sui(vault: &DustVault): u64 { vault.staked_sui.value() }
     public fun vault_round(vault: &DustVault): u64 { vault.round }
@@ -690,7 +695,19 @@ module dust_vacuum::vacuum {
         if (vault.user_shares.contains(user)) { *vault.user_shares.borrow(user) } else { 0 }
     }
 
-    public fun token_vault_balance<T>(tv: &TokenVault<T>): u64 { tv.balance.value() }
+    public fun vault_token_balance<T>(vault: &DustVault): u64 {
+        let token_type = type_name::into_string(type_name::with_original_ids<T>());
+        if (vault.tokens.contains(token_type)) {
+            let balance: &Balance<T> = vault.tokens.borrow(token_type);
+            balance.value()
+        } else {
+            0
+        }
+    }
+
+    public fun vault_token_types(vault: &DustVault): vector<String> {
+        *vault.token_types.keys()
+    }
 
     public fun membership_lifetime_shares(m: &DustDAOMembership): u64 { m.lifetime_shares }
     public fun membership_total_earned(m: &DustDAOMembership): u64 { m.total_sui_earned }
@@ -702,5 +719,11 @@ module dust_vacuum::vacuum {
 
     public fun proposal_votes_for(p: &Proposal): u64 { p.votes_for }
     public fun proposal_votes_against(p: &Proposal): u64 { p.votes_against }
-    public fun proposal_is_active(p: &Proposal): bool { p.is_active }
-}
+        public fun proposal_is_active(p: &Proposal): bool { p.is_active }
+    
+        #[test_only]
+        public fun init_for_testing(ctx: &mut TxContext) {
+            init(ctx);
+        }
+    }
+    
