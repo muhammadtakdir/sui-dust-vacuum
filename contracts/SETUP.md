@@ -17,12 +17,6 @@ Invoke-WebRequest -Uri https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
 choco install rustup.install -y
 ```
 
-**Option C: Via Scoop**
-```powershell
-scoop install rustup
-rustup-init -y
-```
-
 ### 2. Install Sui CLI
 
 After Rust is installed, install Sui CLI:
@@ -30,15 +24,7 @@ After Rust is installed, install Sui CLI:
 ```powershell
 # Install Sui CLI from crates.io
 cargo install --locked --git https://github.com/MystenLabs/sui.git --branch mainnet-v1.37.1 sui
-
-# Or install specific version
-cargo install --locked sui@1.37.1
 ```
-
-**Alternative: Download Pre-built Binary**
-1. Go to https://github.com/MystenLabs/sui/releases
-2. Download `sui-mainnet-v1.37.1-windows-x86_64.tgz`
-3. Extract and add to PATH
 
 ### 3. Verify Installation
 
@@ -52,8 +38,8 @@ sui --version
 ### 1. Initialize Sui Client
 
 ```powershell
-sui client new-env --alias testnet --rpc https://fullnode.testnet.sui.io:443
-sui client switch --env testnet
+sui client new-env --alias mainnet --rpc https://fullnode.mainnet.sui.io:443
+sui client switch --env mainnet
 ```
 
 ### 2. Create/Import Wallet
@@ -69,22 +55,12 @@ sui client new-address ed25519
 sui keytool import "<YOUR_MNEMONIC_PHRASE>" ed25519
 ```
 
-### 3. Get Testnet SUI
-
-```powershell
-# Request testnet SUI from faucet
-sui client faucet
-
-# Check balance
-sui client gas
-```
-
 ## Build & Deploy Contract
 
 ### 1. Navigate to Contract Directory
 
 ```powershell
-cd d:\takdir\sui-dust-vacum\contracts\dust_vacuum
+cd contracts/dust_vacuum
 ```
 
 ### 2. Build Contract
@@ -93,43 +69,21 @@ cd d:\takdir\sui-dust-vacum\contracts\dust_vacuum
 sui move build
 ```
 
-Expected output:
-```
-BUILDING dust_vacuum
-```
-
 ### 3. Run Tests
 
 ```powershell
 sui move test
 ```
 
-### 4. Deploy to Testnet
+### 4. Deploy to Mainnet
 
 ```powershell
-sui client publish --gas-budget 100000000
+sui client publish --gas-budget 500000000
 ```
 
 Save the output - you'll need:
 - **Package ID**: The deployed contract address
 - **Transaction Digest**: Proof of deployment
-
-Example output:
-```
-╭─────────────────────────────────────────────────────────────────────────╮
-│ Object Changes                                                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│ Created Objects:                                                        │
-│  ┌──                                                                    │
-│  │ ObjectID: 0x1234...                                                  │
-│  │ ObjectType: 0x2::package::UpgradeCap                                 │
-│  └──                                                                    │
-│ Published Objects:                                                      │
-│  ┌──                                                                    │
-│  │ PackageID: 0xabcd...  <-- THIS IS YOUR CONTRACT ADDRESS              │
-│  └──                                                                    │
-╰─────────────────────────────────────────────────────────────────────────╯
-```
 
 ## Update Frontend with Contract Address
 
@@ -137,54 +91,57 @@ After deployment, update `src/lib/constants.ts`:
 
 ```typescript
 export const DUST_VACUUM_CONTRACT = {
-  testnet: {
-    PACKAGE_ID: "0x<YOUR_PACKAGE_ID>",
-  },
   mainnet: {
-    PACKAGE_ID: "", // Deploy to mainnet later
+    PACKAGE_ID: "0xc66313cc4815b4fc6ecd2bdf4ccbf3c0277da40b2cb2562c6ab996b91b25c9c5", // Your new Package ID
+    DUST_VAULT_ID: "0xb8164ae8b51ac2d79d94fd6f653815db6d1543c4fc0d534133043a907e8c40f1", // Your new Vault ID
+    ADMIN_CAP_ID: "0x4de73e07b3f08b32d52403e06e6029ff50b3e727811fc548891d9dfc70ddf1e2", // Your Admin Cap ID
   },
 };
 ```
 
-## Contract Functions
+## Core Contract Functions (v3)
 
-### 1. `burn_dust<T>`
-Burns dust by sending to dead address (0x0).
+### 1. `deposit_dust<T>`
+Deposits tokens into the unified Bag storage.
 
 ```typescript
 tx.moveCall({
-  target: `${PACKAGE_ID}::vacuum::burn_dust`,
+  target: `${PACKAGE_ID}::vacuum::deposit_dust`,
   typeArguments: [coinType],
   arguments: [
-    tx.object(coinObjectId),
+    tx.object(DUST_VAULT_ID),
+    tx.object(coinObject),
+    tx.pure.u64(usdValue),
     tx.object("0x6"), // Clock
   ],
 });
 ```
 
-### 2. `log_swap<T>`
-Logs a swap operation (called after Cetus swap).
+### 2. `log_individual_swap<T>`
+Logs a direct swap operation for analytics.
 
 ```typescript
 tx.moveCall({
-  target: `${PACKAGE_ID}::vacuum::log_swap`,
+  target: `${PACKAGE_ID}::vacuum::log_individual_swap`,
   typeArguments: [coinType],
   arguments: [
-    tx.pure.u64(amount),
+    tx.pure.u64(amountIn),
+    tx.pure.u64(amountOut),
     tx.object("0x6"), // Clock
   ],
 });
 ```
 
-### 3. `log_batch_complete`
-Logs completion of batch vacuum.
+### 3. `deposit_sui_rewards_with_fee`
+Admin function to finalize a round and distribute rewards.
 
 ```typescript
 tx.moveCall({
-  target: `${PACKAGE_ID}::vacuum::log_batch_complete`,
+  target: `${PACKAGE_ID}::vacuum::deposit_sui_rewards_with_fee`,
   arguments: [
-    tx.pure.u64(tokensCount),
-    tx.pure.u64(totalSuiReceived),
+    tx.object(ADMIN_CAP_ID),
+    tx.object(DUST_VAULT_ID),
+    tx.object(suiCoin),
     tx.object("0x6"), // Clock
   ],
 });
@@ -193,30 +150,4 @@ tx.moveCall({
 ## Verify Deployment
 
 After deployment, verify on Sui Explorer:
-- Testnet: https://suiscan.xyz/testnet/object/<PACKAGE_ID>
 - Mainnet: https://suiscan.xyz/mainnet/object/<PACKAGE_ID>
-
-## Troubleshooting
-
-### Build Errors
-
-1. **"Cannot find module"**: Run `sui move build` from the contract directory
-2. **"Version mismatch"**: Update Move.toml to match your Sui CLI version
-
-### Deployment Errors
-
-1. **"Insufficient gas"**: Increase gas budget or get more testnet SUI
-2. **"Object not found"**: Wait for faucet transaction to confirm
-
-### Windows-Specific Issues
-
-1. **Long path errors**: Enable long paths in Windows
-   ```powershell
-   New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
-     -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
-   ```
-
-2. **SSL/TLS errors**: Update PowerShell security protocol
-   ```powershell
-   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-   ```

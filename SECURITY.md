@@ -10,15 +10,14 @@ This document outlines the security considerations, known limitations, and mitig
 
 | Function | Access Level | Protection |
 |----------|-------------|------------|
-| `deposit_dust<T>` | Public | Vault must be open |
+| `deposit_dust<T>` | Public | Vault must be open, Value check |
 | `claim_rewards` | Public | Requires valid receipt (burned on use) |
 | `stake_rewards` | Public | Requires valid receipt (burned on use) |
 | `withdraw_staked` | Public | Requires membership with staked balance |
 | `vote` | Public | Requires membership with voting power |
 | `open_vault` | Admin | Requires AdminCap |
 | `close_vault` | Admin | Requires AdminCap |
-| `new_round` | Admin | Requires AdminCap |
-| `create_token_vault<T>` | Admin | Requires AdminCap |
+| `set_target_usd_value` | Admin | Requires AdminCap |
 | `withdraw_for_swap<T>` | Admin | Requires AdminCap |
 | `deposit_sui_rewards_with_fee` | Admin | Requires AdminCap |
 
@@ -38,13 +37,6 @@ This document outlines the security considerations, known limitations, and mitig
 assert!(usd_value <= MAX_USD_VALUE, EValueTooHigh);
 ```
 
-```typescript
-// Frontend validation
-if (totalUsdValue > MAX_DUST_VALUE_USD) {
-  throw new Error(`Total deposit exceeds maximum allowed`);
-}
-```
-
 #### 2. Double-Claim Prevention
 
 **Risk:** Users could claim rewards multiple times with the same receipt.
@@ -52,7 +44,7 @@ if (totalUsdValue > MAX_DUST_VALUE_USD) {
 **Mitigation:** Receipt is destructured and burned on claim/stake:
 
 ```move
-let DepositReceipt { id, depositor, shares, round, reward_preference: _ } = receipt;
+let DepositReceipt { id, ... } = receipt;
 object::delete(id);  // Receipt is burned
 ```
 
@@ -60,21 +52,15 @@ object::delete(id);  // Receipt is burned
 
 **Risk:** Users could use old receipts to claim rewards from new rounds.
 
-**Mitigation:** Round validation:
+**Mitigation:** Round validation logic ensures receipts are only valid for their specific finalized round history entry.
 
-```move
-assert!(round == vault.round, EWrongRound);
-```
+#### 4. Unified Token Storage (Bag)
 
-#### 4. Integer Overflow Prevention
+**Risk:** Fragmentation or loss of tokens in separate vault objects.
 
-**Risk:** Share calculation could overflow with large values.
-
-**Mitigation:** Using u128 for intermediate calculations:
-
-```move
-let user_sui = ((shares as u128) * (total_sui as u128) / (vault.total_shares as u128)) as u64;
-```
+**Mitigation:** 
+- v3 uses a unified `Bag` within the `DustVault` to store all deposited tokens.
+- Simplifies logic and reduces object management overhead.
 
 #### 5. Admin Fee Transparency
 
@@ -91,39 +77,31 @@ let user_sui = ((shares as u128) * (total_sui as u128) / (vault.total_shares as 
 
 **Issue:** USD value is passed from the frontend and not verified on-chain.
 
-**Current Mitigation:** Maximum value cap ($100)
+**Current Mitigation:** Maximum value cap ($100). This is acceptable for a "dust" cleaner.
 
 **Recommended for Production:**
-- Integrate on-chain price oracle (Pyth Network, Switchboard)
+- Integrate on-chain price oracle (Pyth Network)
 - Implement server-side price verification
-- Add rate limiting per user
 
 ### 2. Admin Centralization
 
 **Issue:** Single admin can:
-- Close vault (prevent deposits)
-- Start new round (reset shares)
-- Create token vaults
+- Close vault
+- Set target
+- Execute batch swap
 
 **Current Mitigation:** 
 - Admin wallet is publicly known
 - Events emitted for all admin actions
-- Community can monitor via Sui Explorer
+- Admin cannot withdraw user funds arbitrarily (can only withdraw for swap/distribution flow)
 
-**Recommended for Production:**
-- Implement multi-sig admin (e.g., 2-of-3)
-- Add timelock for critical operations
-- Transition to full DAO governance
+### 3. Asynchronous Rewards
 
-### 3. No Guaranteed Rewards
+**Issue:** Users must wait for the admin to finalize the round before claiming.
 
-**Issue:** If admin doesn't deposit SUI rewards, users with receipts cannot claim.
-
-**Current Mitigation:** None (by design - admin must execute batch swap)
-
-**Recommended for Production:**
-- Implement keeper/bot automation
-- Add minimum reward guarantee mechanism
+**Current Mitigation:** 
+- UI clearly displays "Collecting" vs "Claimable" status.
+- Admin incentivized by 2% fee to process rounds quickly.
 
 ## Frontend Security
 
@@ -136,8 +114,9 @@ let user_sui = ((shares as u128) * (total_sui as u128) / (vault.total_shares as 
 ### Constants Exposure (Intentional)
 ```typescript
 // Public addresses - these are intentionally exposed
-PACKAGE_ID: "0x55422768ae1283fe6373602f11b4f21aa55ab57e2835182831e550c397e6fb60"
-DUST_VAULT_ID: "0x3793eea34e0a2124a5015c59e20acc8400b2a3420061f9418f1cbf42e4a0f578"
+PACKAGE_ID: "0xc66313cc4815b4fc6ecd2bdf4ccbf3c0277da40b2cb2562c6ab996b91b25c9c5"
+DUST_VAULT_ID: "0xb8164ae8b51ac2d79d94fd6f653815db6d1543c4fc0d534133043a907e8c40f1"
+ADMIN_CAP_ID: "0x4de73e07b3f08b32d52403e06e6029ff50b3e727811fc548891d9dfc70ddf1e2"
 ADMIN_WALLET: "0xe087a0ab3b923216b1792aa6343efa5b6bdd90c7c684741e047c3b9b5629e077"
 ```
 
@@ -154,18 +133,9 @@ ADMIN_WALLET: "0xe087a0ab3b923216b1792aa6343efa5b6bdd90c7c684741e047c3b9b5629e07
 | 6 | EProposalNotActive | Proposal is closed/expired |
 | 7 | ENoVotingPower | User has no voting power |
 | 8 | EValueTooHigh | USD value exceeds maximum ($100) |
-
-## Audit Status
-
-- [x] Self-audit completed
-- [ ] Third-party audit (not required for hackathon)
-- [ ] Bug bounty program (not implemented)
-
-## Reporting Security Issues
-
-For security concerns, please contact the admin wallet holder or open an issue on GitHub.
+| 9 | ERoundNotFinalized | Round rewards not yet deposited |
 
 ---
 
-*Last Updated: February 2026*
-*Version: 1.0.0*
+*Last Updated: February 6, 2026*
+*Version: v3.0 (Unified Vault)*

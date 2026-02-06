@@ -119,7 +119,10 @@ export function RewardsPanel({
             ) : (
               <div className="p-4 bg-sui-darker rounded-xl mb-4 text-center">
                 <Award className="w-8 h-8 text-sui-muted mx-auto mb-2" />
-                <p className="text-sui-muted text-sm mb-3">No membership found</p>
+                <p className="text-sui-muted text-sm mb-1">No membership found</p>
+                <p className="text-[10px] text-sui-muted mb-3 px-4 leading-relaxed">
+                  Membership tracks your lifetime contributions and grants voting power in the DAO governance.
+                </p>
                 <button
                   onClick={onCreateMembership}
                   className="px-4 py-2 bg-sui-gradient rounded-lg text-sm font-medium hover:opacity-90"

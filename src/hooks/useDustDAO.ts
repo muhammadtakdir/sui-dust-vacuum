@@ -438,13 +438,16 @@ export function useDustDAO() {
 
       const tx = new Transaction();
 
-      tx.moveCall({
+      const [membership] = tx.moveCall({
         target: `${PACKAGE_ID}::vacuum::create_membership`,
         arguments: [
           tx.object(DUST_VAULT_ID),
           tx.object(CLOCK_OBJECT_ID),
         ],
       });
+
+      // Transfer the created membership object back to the user
+      tx.transferObjects([membership], account.address);
 
       const txResult = await signAndExecute({
         transaction: tx as unknown as Parameters<typeof signAndExecute>[0]["transaction"],

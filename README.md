@@ -56,36 +56,31 @@ Unlike other tools that leave residual amounts, Sui Dust Vacuum uses Sui's uniqu
 │  ┌─────────────────────────────────────────────────────────────┐│
 │  │                  Sui Blockchain (Mainnet)                   ││
 │  │  ┌───────────────┐  ┌───────────────┐  ┌────────────────┐  ││
-│  │  │   DustVault   │  │  TokenVaults  │  │  Cetus Pools   │  ││
-│  │  │   (Shared)    │  │   <T> each    │  │   (Liquidity)  │  ││
+│  │  │   DustVault   │  │ Unified Bag   │  │  Cetus Pools   │  ││
+│  │  │   (Shared)    │  │   (All Coins) │  │   (Liquidity)  │  ││
 │  │  └───────────────┘  └───────────────┘  └────────────────┘  ││
 │  └─────────────────────────────────────────────────────────────┘│
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### Smart Contract (DustDAO)
+### Smart Contract (DustDAO v3)
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        DustVault                             │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │ • admin: address                                       │  │
-│  │ • user_shares: Table<address, u64>  (USD value)       │  │
-│  │ • total_shares: u64                                    │  │
-│  │ • sui_rewards: Balance<SUI>                            │  │
+│  │ • tokens: Bag (Unified Storage)                        │  │
+│  │ • history: Table<u64, RoundRewards>                    │  │
+│  │ • current_round_shares: u64                            │  │
+│  │ • target_usd_value: u64                                │  │
+│  │ • current_usd_value: u64                               │  │
 │  │ • staked_sui: Balance<SUI>                             │  │
 │  │ • round: u64                                           │  │
 │  │ • total_fees_collected: u64                            │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
-            │
-            │ One vault per token type
-            ▼
-┌──────────────────────┐  ┌──────────────────────┐
-│  TokenVault<USDC>    │  │  TokenVault<CETUS>   │  ...
-│  balance: Balance<T> │  │  balance: Balance<T> │
-└──────────────────────┘  └──────────────────────┘
 ```
 
 ---
@@ -102,10 +97,10 @@ Unlike other tools that leave residual amounts, Sui Dust Vacuum uses Sui's uniqu
    └─ One-click to swap ALL dust to SUI
 
 3. Behind the scenes (Single PTB):
-   ├─ Merge all USDC coins → Swap via Cetus → SUI
-   ├─ Merge all CETUS coins → Swap via Cetus → SUI
-   ├─ Merge all BUCK coins → Swap via Cetus → SUI
-   └─ ... (all tokens in parallel)
+   ├─ Merge all coins of each type
+   ├─ Get optimized swap routes via Cetus Aggregator SDK
+   ├─ Execute swaps using Cetus pool_script_v2
+   └─ Transfer SUI back to user
 
 4. Result:
    └─ All dust tokens = 0 balance
@@ -115,47 +110,31 @@ Unlike other tools that leave residual amounts, Sui Dust Vacuum uses Sui's uniqu
 ### Mode 2: DustDAO Pool (Community Vault)
 
 ```
-Phase 1: DEPOSIT
-────────────────
+Phase 1: DEPOSIT (Active Round)
+───────────────────────────────
 User A deposits: 0.5 USDC ($0.50) + 0.03 SCA ($0.01) = $0.51 shares
 User B deposits: 0.8 USDC ($0.80) + 15 NAVI ($3.00) = $3.80 shares  
-User C deposits: 1.2 USDC ($1.20)                    = $1.20 shares
 
-Vault Total: $5.51 (551 shares)
+Vault Status: Collecting (Current Value / Target Value)
 
-Notes: Token vaults are **automatically created on-chain** when users deposit a new token type. Tokens are **locked in the DustVault system** (per-token vaults) — not sent to an admin wallet — ensuring non-custodial, trustless deposits.
+Notes: Tokens are deposited into a unified Bag in the DustVault. Users receive a `DepositReceipt` tracking their share value and round number.
 
-Phase 2: BATCH SWAP (Admin/Keeper)
-──────────────────────────────────
-Admin clicks "Batch Swap All Dust"
-├─ Admin wallet pays gas: ~$2 (reimbursed from fee)
-├─ Contract swaps all tokens via Cetus
-├─ Total SUI received: 100 SUI
-└─ Auto fee deduction:
-   ├─ 2% (2 SUI) → Admin (gas reimbursement + incentive)
-   └─ 98% (98 SUI) → User rewards pool
+Phase 2: BATCH SWAP (Admin)
+───────────────────────────
+Admin closes vault when target is reached.
+Admin executes batch swap of accumulated tokens to SUI.
+Admin calls `deposit_sui_rewards_with_fee`:
+├─ Deducts 2% fee (Gas reimbursement + incentive)
+├─ Deposits remaining SUI into Round History
+└─ Automatically starts new round
 
 Phase 3: CLAIM (Users)
 ──────────────────────
-User A ($0.51 / $5.51) = 9.3% → Claims 9.1 SUI
-User B ($3.80 / $5.51) = 69.0% → Claims 67.6 SUI
-User C ($1.20 / $5.51) = 21.8% → Claims 21.4 SUI
+User A checks "Your Rewards":
+└─ Finds receipt from finalized Round #N
+└─ Claims 98% of proportional SUI
 
 Alternative: Auto-Stake → SUI goes to staking pool for yield
-```
-
-### Governance (Future)
-
-All DustDAO members receive voting power based on lifetime contributions:
-
-```
-Voting Power = Lifetime Shares Contributed
-
-Proposals can include:
-• Fee adjustments
-• New token support
-• Protocol upgrades
-• Treasury allocation
 ```
 
 ---
@@ -169,7 +148,7 @@ Proposals can include:
 | **Wallet** | @mysten/dapp-kit |
 | **Blockchain** | Sui Network (Mainnet) |
 | **Smart Contract** | Move 2024 Edition |
-| **DEX** | Cetus Aggregator API |
+| **DEX** | Cetus Aggregator SDK v3 |
 | **State** | React Query (@tanstack/react-query) |
 
 ---
@@ -180,79 +159,9 @@ Proposals can include:
 
 | Object | Address |
 |--------|---------|
-| **Package ID** | `0xcbcb622f6a47404be4c28d75dc47fdc0abfd2e8a730eb104495a404e5b2c56e4` |
-| **DustVault** | `0xf0c002e13c121a72b12d39d3e6d1a99c10792ee5c3d539bb1c6b28c778beb720` |
-| **AdminCap** | `0x5e270e3af10a6085119ea5f5b2e479dfcbd4a451abba02f3aa1463b81394a8a3` |
-
-**Deployment TX (v2 - Security Update)**: [FvZF4YnoQ6TxnpkxJfZUxdyWkwpkoF3f71x4s4rWR2g3](https://suiscan.xyz/mainnet/tx/FvZF4YnoQ6TxnpkxJfZUxdyWkwpkoF3f71x4s4rWR2g3)
-
-### Key Functions
-
-```move
-// ═══════════════════════════════════════════════════════════════
-// INDIVIDUAL MODE
-// ═══════════════════════════════════════════════════════════════
-
-/// Log individual swap for analytics (called in PTB after Cetus swap)
-public fun log_individual_swap<T>(
-    amount: u64, 
-    sui_received: u64, 
-    clock: &Clock, 
-    ctx: &TxContext
-)
-
-// ═══════════════════════════════════════════════════════════════
-// POOL MODE (DustDAO)
-// ═══════════════════════════════════════════════════════════════
-
-/// Deposit dust with USD value (shares = USD value * 1e6)
-public fun deposit_dust<T>(
-    vault: &mut DustVault, 
-    token_vault: &mut TokenVault<T>, 
-    dust_coin: Coin<T>, 
-    usd_value: u64, 
-    clock: &Clock, 
-    ctx: &mut TxContext
-)
-
-/// Admin: Deposit SUI rewards with auto 2% fee deduction
-public fun deposit_sui_rewards_with_fee(
-    admin: &AdminCap,
-    vault: &mut DustVault,
-    sui_coin: Coin<SUI>,
-    clock: &Clock,
-    ctx: &mut TxContext
-): Coin<SUI>  // Returns admin fee
-
-/// User: Claim SUI rewards (proportional to shares)
-public fun claim_rewards(
-    vault: &mut DustVault, 
-    receipt: DepositReceipt, 
-    membership: &mut DustDAOMembership, 
-    clock: &Clock, 
-    ctx: &mut TxContext
-): Coin<SUI>
-
-/// User: Auto-stake rewards instead of claiming
-public fun stake_rewards(
-    vault: &mut DustVault, 
-    receipt: DepositReceipt,
-    membership: &mut DustDAOMembership, 
-    clock: &Clock
-)
-
-// ═══════════════════════════════════════════════════════════════
-// GOVERNANCE
-// ═══════════════════════════════════════════════════════════════
-
-/// Vote on proposal (voting power = lifetime_shares)
-public fun vote(
-    proposal: &mut Proposal, 
-    membership: &DustDAOMembership, 
-    vote_for: bool, 
-    clock: &Clock
-)
-```
+| **Package ID** | `0xc66313cc4815b4fc6ecd2bdf4ccbf3c0277da40b2cb2562c6ab996b91b25c9c5` |
+| **DustVault** | `0xb8164ae8b51ac2d79d94fd6f653815db6d1543c4fc0d534133043a907e8c40f1` |
+| **AdminCap** | `0x4de73e07b3f08b32d52403e06e6029ff50b3e727811fc548891d9dfc70ddf1e2` |
 
 ### Fee Structure
 
@@ -271,24 +180,45 @@ public fun vote(
 - pnpm (recommended) or npm
 - Sui Wallet (Sui Wallet, Suiet, Martian, etc.)
 
-### Installation
+### Installation & Forking
 
-```bash
-# Clone repository
-git clone https://github.com/your-username/sui-dust-vacuum.git
-cd sui-dust-vacuum
+If you want to run your own instance or contribute:
 
-# Install dependencies
-pnpm install
+1. **Fork the repository** on GitHub.
+2. **Clone your fork**:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/sui-dust-vacuum.git
+   cd sui-dust-vacuum
+   ```
 
-# Run development server
-pnpm dev
+3. **Install dependencies**:
+   ```bash
+   npm install
+   # or
+   pnpm install
+   ```
 
-# Build for production
-pnpm build
-```
+4. **Configure Environment**:
+   - The project uses public mainnet constants by default.
+   - If deploying your own contract, update `src/lib/constants.ts` with your new Package ID and Vault ID.
 
-### Build Smart Contract
+5. **Run development server**:
+   ```bash
+   npm run dev
+   # or
+   pnpm dev
+   ```
+
+6. **Build for production**:
+   ```bash
+   npm run build
+   # or
+   pnpm build
+   ```
+
+### Build Smart Contract (Optional)
+
+If you want to modify or redeploy the contract:
 
 ```bash
 # Navigate to contract directory
@@ -306,73 +236,16 @@ sui client publish --gas-budget 500000000
 
 ---
 
-## 📁 Project Structure
-
-```
-sui-dust-vacuum/
-├── src/
-│   ├── app/                    # Next.js App Router
-│   │   ├── layout.tsx          # Root layout with fonts
-│   │   ├── page.tsx            # Main page
-│   │   ├── providers.tsx       # Sui + React Query providers
-│   │   └── api/prices/         # Price API route
-│   ├── components/
-│   │   ├── dust/               # Main vacuum components
-│   │   │   ├── DustVacuum.tsx  # Main container
-│   │   │   ├── TokenCard.tsx   # Display dust tokens
-│   │   │   ├── VacuumButton.tsx# Action button
-│   │   │   ├── DustDAOPool.tsx # Pool mode UI
-│   │   │   ├── AdminPanel.tsx  # Admin controls
-│   │   │   └── ...             # Other dust components
-│   │   ├── effects/            # Animation components
-│   │   └── layout/             # Header, Footer, Features
-│   ├── hooks/
-│   │   ├── useDustVacuum.ts    # Main vacuum logic + PTB
-│   │   ├── useDustDAO.ts       # Pool mode logic
-│   │   └── useTokenBalances.ts # Fetch wallet balances
-│   ├── lib/
-│   │   ├── constants.ts        # Contract addresses, config
-│   │   ├── tokens.ts           # Token definitions
-│   │   └── utils.ts            # Helper functions
-│   └── types/
-│       ├── index.ts            # TypeScript types
-│       └── dustdao.ts          # DustDAO types
-├── contracts/
-│   └── dust_vacuum/
-│       ├── sources/
-│       │   └── dust_vacuum.move # Smart contract (Move 2024)
-│       ├── tests/              # Move tests
-│       └── Move.toml           # Move config (edition = "2024")
-├── public/                     # Static assets
-├── AI_DISCLOSURE.md            # AI assistance disclosure
-└── package.json
-```
-
----
-
 ## 🔒 Security Considerations
 
-- **Non-custodial**: Users always control their assets
-- **Open Source**: Smart contract code is fully auditable on-chain
-- **PTB Safety**: Atomic transactions - all swaps succeed or all fail
-- **Slippage Protection**: Configurable slippage tolerance (default 0.5%)
-- **Price Feeds**: USD values from DexScreener API
-- **USD Value Cap**: Max $100 per deposit to prevent manipulation
-- **Admin Access**: AdminCap-based access control
+- **Non-custodial**: Users always control their assets via atomic swaps or claimable receipts.
+- **Open Source**: Smart contract code is fully auditable.
+- **PTB Safety**: Individual mode uses atomic PTBs - swaps either fully succeed or fail.
+- **Slippage Protection**: Configurable slippage tolerance (default 0.5%).
+- **Value Cap**: Max $100 per deposit in Pool Mode to prevent manipulation.
+- **Admin Access**: AdminCap-based access control for vault management.
 
 See [SECURITY.md](SECURITY.md) for full security audit report.
-
----
-
-## 🗺️ Roadmap
-
-- [x] **v1.0** - Individual vacuum mode
-- [x] **v1.1** - Smart contract deployment (mainnet)
-- [x] **v2.0** - DustDAO pool mode UI
-- [x] **v2.1** - Security audit & fixes
-- [ ] **v3.0** - Auto-stake integration
-- [ ] **v3.1** - Governance voting UI
-- [ ] **v4.0** - Mobile-responsive redesign
 
 ---
 
@@ -397,7 +270,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## 🙏 Acknowledgments
 
 - **Sui Foundation** - For the amazing blockchain
-- **Cetus Protocol** - For the aggregator API and DEX infrastructure
+- **Cetus Protocol** - For the aggregator SDK and liquidity
 - **Mysten Labs** - For the SDK and developer tooling
 
 ---
@@ -408,9 +281,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [Sui Network](https://sui.io)
 - [Cetus Protocol](https://cetus.zone)
 - [Sui Explorer](https://suiscan.xyz/mainnet)
-- [Contract on Explorer](https://suiscan.xyz/mainnet/object/0xcbcb622f6a47404be4c28d75dc47fdc0abfd2e8a730eb104495a404e5b2c56e4)
 - [GitHub Repository](https://github.com/muhammadtakdir/sui-dust-vacuum)
 
 ---
-
-
